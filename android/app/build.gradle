@@ -6,12 +6,12 @@ plugins {
 
 android {
     namespace "com.example.floating_downloader"
-    compileSdk 35
+    compileSdk 36
 
     defaultConfig {
         applicationId "com.example.floating_downloader"
         minSdk 29
-        targetSdk 35
+        targetSdk 36
         versionCode 3
         versionName "3.0.0"
     }
