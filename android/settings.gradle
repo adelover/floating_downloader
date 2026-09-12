@@ -28,7 +28,7 @@ plugins {
 }
 
 dependencyResolutionManagement {
-    repositoriesMode.set(RepositoriesMode.FALLBACK)
+    repositoriesMode.set(RepositoriesMode.PREFER_FALLBACK)
     repositories {
         google()
         mavenCentral()
