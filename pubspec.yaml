@@ -1,7 +1,7 @@
 name: floating_downloader
 description: A modern Android downloader with a floating overlay and media-aware browser.
 publish_to: "none"
-version: 3.0.0+3
+version: 3.1.0+4
 
 environment:
   sdk: ">=3.6.0 <4.0.0"
@@ -27,6 +27,8 @@ flutter_launcher_icons:
   ios: false
   image_path: "assets/icon.png"
   min_sdk_android: 29
+  adaptive_icon_background: "assets/icon_background.png"
+  adaptive_icon_foreground: "assets/icon_foreground.png"
 
 flutter:
   uses-material-design: true

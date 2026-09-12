@@ -35,6 +35,8 @@ void overlayMain() {
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await SettingsStore.load();
+  await SharedLinkBus.init();
   runApp(const DownloaderApp());
 }
 
@@ -196,6 +198,17 @@ class DownloadStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> remove(String id, String savedUri) async {
+    await DownloadService.deleteFile(savedUri);
+    completed.removeWhere((e) => e.id == id);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(
+      'downloads',
+      completed.map((e) => jsonEncode(e.toJson())).toList(),
+    );
+    notifyListeners();
+  }
+
   void start(String id, String name) {
     active[id] = 0;
     activeNames[id] = name;
@@ -218,6 +231,47 @@ class DownloadStore extends ChangeNotifier {
     active.remove(id);
     activeNames.remove(id);
     notifyListeners();
+  }
+}
+
+class SettingsStore {
+  static final ValueNotifier<bool> wifiOnly = ValueNotifier<bool>(false);
+
+  static Future<void> load() async {
+    final prefs = await SharedPreferences.getInstance();
+    wifiOnly.value = prefs.getBool('wifi_only') ?? false;
+  }
+
+  static Future<void> setWifiOnly(bool value) async {
+    wifiOnly.value = value;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('wifi_only', value);
+  }
+}
+
+/// وقتی کاربر از اپ دیگری (مثل مرورگر یا تلگرام) یک لینک را با «اشتراک‌گذاری»
+/// به این برنامه می‌فرستد، سمت نیتیو آن را از طریق MethodChannel به اینجا
+/// می‌فرستد و این کلاس آن را به رابط کاربری اعلام می‌کند.
+class SharedLinkBus {
+  static final ValueNotifier<String?> pending = ValueNotifier<String?>(null);
+
+  static Future<void> init() async {
+    _storageChannel.setMethodCallHandler((call) async {
+      if (call.method == 'onSharedText') {
+        final text = call.arguments as String?;
+        if (text != null && text.trim().isNotEmpty) {
+          pending.value = text.trim();
+        }
+      }
+      return null;
+    });
+    try {
+      final initial =
+          await _storageChannel.invokeMethod<String>('getSharedText');
+      if (initial != null && initial.trim().isNotEmpty) {
+        pending.value = initial.trim();
+      }
+    } catch (_) {}
   }
 }
 
@@ -326,12 +380,91 @@ class DownloadService {
         isHls(lower);
   }
 
+  /// بررسی چند بایت اول فایل (Magic Number) برای انواع پرکاربرد رسانه.
+  /// اگر نوع فایل ناشناخته بود یا شناسه نداشت (مثلاً zip/pdf/غیره)، به‌جای
+  /// رد کردن، به‌صورت محافظه‌کارانه قبول می‌شود؛ فقط جلوی «ویدیو/صدا/عکس جعلی
+  /// که در واقع HTML یا متن است» گرفته می‌شود.
+  static Future<bool> _looksLikeValidFile(File file, String mimeType) async {
+    final raf = await file.open();
+    try {
+      final header = await raf.read(16);
+      if (header.length < 4) return true;
+      bool startsWithAscii(String s) {
+        final bytes = s.codeUnits;
+        if (header.length < bytes.length) return false;
+        for (var i = 0; i < bytes.length; i++) {
+          if (header[i] != bytes[i]) return false;
+        }
+        return true;
+      }
+
+      final looksLikeHtmlOrText = startsWithAscii('<htm') ||
+          startsWithAscii('<!DO') ||
+          startsWithAscii('<HTM') ||
+          startsWithAscii('<?xm') ||
+          startsWithAscii('{') ||
+          startsWithAscii('[');
+
+      // برای video/audio/image فقط بررسی می‌کنیم که فایل با یک صفحه
+      // HTML/JSON/متنی شروع نشده باشد (رایج‌ترین حالت دانلود فیک).
+      // امضای دقیق هر فرمت رسانه چک نمی‌شود چون فرمت‌های واقعی معتبر
+      // زیادند و هدف فقط رد کردن پاسخ‌های غیر-رسانه‌ای است.
+      if (looksLikeHtmlOrText) return false;
+      return true;
+    } finally {
+      await raf.close();
+    }
+  }
+
+  static Future<bool> isWifiConnected() async {
+    try {
+      return await _storageChannel.invokeMethod<bool>('isWifiConnected') ??
+          true;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  static Future<String?> openFile(String uri, String mimeType) async {
+    try {
+      return await _storageChannel.invokeMethod<String>(
+        'openFile',
+        {'uri': uri, 'mimeType': mimeType},
+      );
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  static Future<void> shareFile(String uri, String mimeType) async {
+    try {
+      await _storageChannel.invokeMethod('shareFile', {
+        'uri': uri,
+        'mimeType': mimeType,
+      });
+    } catch (_) {}
+  }
+
+  static Future<void> deleteFile(String uri) async {
+    try {
+      await _storageChannel.invokeMethod('deleteFile', {'uri': uri});
+    } catch (_) {}
+  }
+
   static Future<DownloadItem> download({
     required String url,
     String? preferredName,
     Map<String, String>? headers,
     void Function(double progress)? onProgress,
   }) async {
+    if (SettingsStore.wifiOnly.value) {
+      final wifi = await isWifiConnected();
+      if (!wifi) {
+        throw Exception(
+          'طبق تنظیمات شما، دانلود فقط با Wi-Fi انجام می‌شود. به Wi-Fi وصل شوید یا این گزینه را در تنظیمات خاموش کنید.',
+        );
+      }
+    }
     final cleanUrl = url.trim();
     final parsed = Uri.tryParse(cleanUrl);
     if (parsed == null || !parsed.hasScheme || !parsed.hasAuthority) {
@@ -370,8 +503,7 @@ class DownloadService {
         options: Options(
           headers: {
             'Accept': '*/*',
-            'User-Agent':
-                'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/131 Mobile Safari/537.36',
+            'User-Agent': _browserUserAgent,
             ...?headers,
           },
         ),
@@ -393,6 +525,29 @@ class DownloadService {
       final file = File(tempPath);
       if (!await file.exists() || await file.length() == 0) {
         throw Exception('فایل دانلودشده خالی یا ناقص است.');
+      }
+
+      // اعتبارسنجی واقعی بودن فایل: خیلی از سرورها به‌جای فایل رسانه‌ای،
+      // یک صفحه HTML خطا/لاگین با کد 200 برمی‌گردانند. بدون این بررسی،
+      // آن صفحه به اشتباه به‌عنوان "دانلود موفق" ذخیره می‌شد ولی در واقع
+      // فایل واقعی نبود (همان دانلود فیک).
+      final expectsMedia = mimeType.startsWith('video/') ||
+          mimeType.startsWith('audio/') ||
+          mimeType.startsWith('image/');
+      final responseContentType =
+          (response.headers.value('content-type') ?? '').toLowerCase();
+      if (expectsMedia &&
+          (responseContentType.contains('text/html') ||
+              responseContentType.contains('text/plain') ||
+              responseContentType.contains('application/json'))) {
+        throw Exception(
+          'سرور به‌جای فایل رسانه‌ای یک صفحه متنی/HTML برگرداند (معمولاً یعنی لینک نیاز به ورود، Referer یا کوکی معتبر دارد).',
+        );
+      }
+      if (!await _looksLikeValidFile(file, mimeType)) {
+        throw Exception(
+          'فایل دریافتی با نوع «$mimeType» مطابقت ندارد و احتمالاً واقعی نیست. لینک مستقیم فایل را بررسی کنید.',
+        );
       }
 
       final savedUri = await _saveToDownloads(
@@ -433,11 +588,11 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   int index = 0;
 
-  final pages = const [
-    HomeTab(),
-    BrowserTab(),
-    HistoryTab(),
-    SettingsTab(),
+  late final pages = [
+    HomeTab(key: HomeTab.globalKey),
+    const BrowserTab(),
+    const HistoryTab(),
+    const SettingsTab(),
   ];
 
   @override
@@ -445,11 +600,22 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     DownloadStore.instance.load();
+    SharedLinkBus.pending.addListener(_onSharedLink);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _onSharedLink());
+  }
+
+  void _onSharedLink() {
+    final link = SharedLinkBus.pending.value;
+    if (link == null || link.isEmpty) return;
+    SharedLinkBus.pending.value = null;
+    setState(() => index = 0);
+    HomeTab.globalKey.currentState?.receiveSharedLink(link);
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    SharedLinkBus.pending.removeListener(_onSharedLink);
     super.dispose();
   }
 
@@ -495,25 +661,70 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 }
 
 class HomeTab extends StatefulWidget {
-  const HomeTab({super.key});
+  HomeTab({super.key});
+
+  static final GlobalKey<_HomeTabState> globalKey =
+      GlobalKey<_HomeTabState>();
 
   @override
   State<HomeTab> createState() => _HomeTabState();
 }
 
-class _HomeTabState extends State<HomeTab> {
+class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
   final urlController = TextEditingController();
   bool overlayActive = false;
   bool downloading = false;
+  String? clipboardSuggestion;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _refreshOverlay();
+    _checkClipboard();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _checkClipboard();
+  }
+
+  Future<void> _checkClipboard() async {
+    try {
+      final data = await Clipboard.getData(Clipboard.kTextPlain);
+      final text = data?.text?.trim();
+      if (text == null || text.isEmpty) return;
+      final uri = Uri.tryParse(text);
+      final isLink = uri != null &&
+          (uri.scheme == 'http' || uri.scheme == 'https') &&
+          uri.hasAuthority;
+      if (!isLink || text == urlController.text) return;
+      if (mounted) setState(() => clipboardSuggestion = text);
+    } catch (_) {}
+  }
+
+  void _useClipboardSuggestion() {
+    final link = clipboardSuggestion;
+    if (link == null) return;
+    setState(() {
+      urlController.text = link;
+      clipboardSuggestion = null;
+    });
+  }
+
+  /// وقتی از اپ دیگری لینک به این برنامه اشتراک‌گذاری شود، از اینجا وارد
+  /// می‌شود و دانلود به‌صورت خودکار شروع می‌شود.
+  void receiveSharedLink(String link) {
+    setState(() {
+      urlController.text = link;
+      clipboardSuggestion = null;
+    });
+    _download();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     urlController.dispose();
     super.dispose();
   }
@@ -618,6 +829,17 @@ class _HomeTabState extends State<HomeTab> {
               ),
             ),
           ),
+          if (clipboardSuggestion != null)
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+              sliver: SliverToBoxAdapter(
+                child: _ClipboardBanner(
+                  link: clipboardSuggestion!,
+                  onUse: _useClipboardSuggestion,
+                  onDismiss: () => setState(() => clipboardSuggestion = null),
+                ),
+              ),
+            ),
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
             sliver: SliverToBoxAdapter(
@@ -764,6 +986,65 @@ class _Header extends StatelessWidget {
         ),
         trailing,
       ],
+    );
+  }
+}
+
+class _ClipboardBanner extends StatelessWidget {
+  final String link;
+  final VoidCallback onUse;
+  final VoidCallback onDismiss;
+
+  const _ClipboardBanner({
+    required this.link,
+    required this.onUse,
+    required this.onDismiss,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+      decoration: BoxDecoration(
+        color: _cyan.withOpacity(.10),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _cyan.withOpacity(.25)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.link_rounded, color: _cyan, size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'لینکی در کلیپ‌بورد پیدا شد',
+                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12),
+                ),
+                Text(
+                  link,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textDirection: TextDirection.ltr,
+                  style: const TextStyle(color: _muted, fontSize: 10),
+                ),
+              ],
+            ),
+          ),
+          TextButton(
+            onPressed: onUse,
+            child: const Text('استفاده'),
+          ),
+          IconButton(
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            onPressed: onDismiss,
+            icon: const Icon(Icons.close_rounded, size: 17, color: _muted),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1021,12 +1302,23 @@ class BrowserTab extends StatefulWidget {
   State<BrowserTab> createState() => _BrowserTabState();
 }
 
+const _browserUserAgent =
+    'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/131 Mobile Safari/537.36';
+
+class _DetectedMedia {
+  final String url;
+  final String referer;
+
+  const _DetectedMedia({required this.url, required this.referer});
+}
+
 class _BrowserTabState extends State<BrowserTab> {
   InAppWebViewController? webView;
   final addressController = TextEditingController(text: 'https://www.google.com');
   double progress = 0;
   bool loading = true;
-  final List<String> detected = [];
+  String currentPageUrl = 'https://www.google.com';
+  final List<_DetectedMedia> detected = [];
 
   @override
   void dispose() {
@@ -1037,10 +1329,10 @@ class _BrowserTabState extends State<BrowserTab> {
   void _addDetected(String url) {
     if (!DownloadService.looksLikeMedia(url)) return;
     if (DownloadService.isHls(url)) return;
-    if (detected.contains(url)) return;
+    if (detected.any((e) => e.url == url)) return;
     if (!mounted) return;
     setState(() {
-      detected.insert(0, url);
+      detected.insert(0, _DetectedMedia(url: url, referer: currentPageUrl));
       if (detected.length > 20) detected.removeLast();
     });
   }
@@ -1060,10 +1352,27 @@ class _BrowserTabState extends State<BrowserTab> {
     await webView?.loadUrl(urlRequest: URLRequest(url: WebUri(uri.toString())));
   }
 
-  Future<void> _downloadDetected(String url) async {
+  Future<void> _downloadDetected(_DetectedMedia media) async {
     Navigator.of(context).maybePop();
     try {
-      await DownloadService.download(url: url);
+      // بدون Referer/Cookieِ درست، بسیاری از سرورها به‌جای فایل، صفحه
+      // خطا/لاگین برمی‌گردانند که باعث «دانلود فیک» می‌شد. اینجا همان
+      // هدرهایی که مرورگر داخلی برای دیدن رسانه استفاده کرده، برای دانلود
+      // هم فرستاده می‌شود.
+      String cookieHeader = '';
+      try {
+        final cookies = await CookieManager.instance()
+            .getCookies(url: WebUri(media.referer));
+        cookieHeader = cookies.map((c) => '${c.name}=${c.value}').join('; ');
+      } catch (_) {}
+
+      await DownloadService.download(
+        url: media.url,
+        headers: {
+          'Referer': media.referer,
+          if (cookieHeader.isNotEmpty) 'Cookie': cookieHeader,
+        },
+      );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('✓ دانلود کامل شد و در Downloads ذخیره شد.')),
@@ -1126,7 +1435,10 @@ class _BrowserTabState extends State<BrowserTab> {
                     itemCount: detected.length,
                     separatorBuilder: (_, __) => const SizedBox(height: 8),
                     itemBuilder: (_, index) {
-                      final url = detected[index];
+                      final media = detected[index];
+                      final mime = DownloadService.mimeFromExtension(
+                        DownloadService.extensionFromUrl(media.url),
+                      );
                       return Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
@@ -1135,14 +1447,19 @@ class _BrowserTabState extends State<BrowserTab> {
                         ),
                         child: Row(
                           children: [
-                            const CircleAvatar(
-                              backgroundColor: Color(0x1A38D9FF),
-                              child: Icon(Icons.movie_rounded, color: _cyan),
+                            CircleAvatar(
+                              backgroundColor: const Color(0x1A38D9FF),
+                              child: Icon(
+                                mime.startsWith('audio/')
+                                    ? Icons.music_note_rounded
+                                    : Icons.movie_rounded,
+                                color: _cyan,
+                              ),
                             ),
                             const SizedBox(width: 10),
                             Expanded(
                               child: Text(
-                                url,
+                                media.url,
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
                                 textDirection: TextDirection.ltr,
@@ -1151,7 +1468,7 @@ class _BrowserTabState extends State<BrowserTab> {
                             ),
                             const SizedBox(width: 8),
                             IconButton(
-                              onPressed: () => _downloadDetected(url),
+                              onPressed: () => _downloadDetected(media),
                               icon: const Icon(Icons.download_rounded),
                               color: _success,
                             ),
@@ -1237,6 +1554,7 @@ class _BrowserTabState extends State<BrowserTab> {
                   useOnDownloadStart: true,
                   thirdPartyCookiesEnabled: true,
                   transparentBackground: true,
+                  userAgent: _browserUserAgent,
                 ),
                 onWebViewCreated: (controller) => webView = controller,
                 onLoadStart: (controller, url) {
@@ -1244,7 +1562,10 @@ class _BrowserTabState extends State<BrowserTab> {
                   setState(() {
                     loading = true;
                     progress = 0;
-                    if (url != null) addressController.text = url.toString();
+                    if (url != null) {
+                      addressController.text = url.toString();
+                      currentPageUrl = url.toString();
+                    }
                     detected.clear();
                   });
                 },
@@ -1300,16 +1621,30 @@ class _BrowserTabState extends State<BrowserTab> {
   }
 }
 
-class HistoryTab extends StatelessWidget {
+class HistoryTab extends StatefulWidget {
   final bool fullscreen;
 
   const HistoryTab({super.key, this.fullscreen = false});
 
   @override
+  State<HistoryTab> createState() => _HistoryTabState();
+}
+
+class _HistoryTabState extends State<HistoryTab> {
+  final searchController = TextEditingController();
+  String query = '';
+
+  @override
+  void dispose() {
+    searchController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        leading: fullscreen
+        leading: widget.fullscreen
             ? IconButton(
                 onPressed: () => Navigator.of(context).maybePop(),
                 icon: const Icon(Icons.arrow_back_rounded),
@@ -1345,9 +1680,29 @@ class HistoryTab extends StatelessWidget {
             );
           }
 
+          final filtered = query.trim().isEmpty
+              ? store.completed
+              : store.completed
+                  .where((e) =>
+                      e.name.toLowerCase().contains(query.trim().toLowerCase()))
+                  .toList();
+
           return ListView(
             padding: const EdgeInsets.fromLTRB(16, 6, 16, 24),
             children: [
+              if (store.completed.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: TextField(
+                    controller: searchController,
+                    onChanged: (value) => setState(() => query = value),
+                    decoration: InputDecoration(
+                      hintText: 'جستجو در نام فایل…',
+                      prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 14),
+                    ),
+                  ),
+                ),
               if (store.active.isNotEmpty) ...[
                 const _SectionTitle(title: 'در حال دانلود'),
                 ...store.active.entries.map(
@@ -1358,10 +1713,18 @@ class HistoryTab extends StatelessWidget {
                 ),
                 const SizedBox(height: 16),
               ],
-              if (store.completed.isNotEmpty) ...[
+              if (filtered.isNotEmpty) ...[
                 const _SectionTitle(title: 'تکمیل‌شده'),
-                ...store.completed.map((item) => _HistoryCard(item: item)),
-              ],
+                ...filtered.map((item) => _HistoryCard(item: item)),
+              ] else if (query.trim().isNotEmpty)
+                const Padding(
+                  padding: EdgeInsets.only(top: 24),
+                  child: Text(
+                    'نتیجه‌ای پیدا نشد.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: _muted),
+                  ),
+                ),
             ],
           );
         },
@@ -1445,6 +1808,48 @@ class _HistoryCard extends StatelessWidget {
 
   const _HistoryCard({required this.item});
 
+  Future<void> _handleAction(BuildContext context, String action) async {
+    switch (action) {
+      case 'open':
+        final error = await DownloadService.openFile(
+          item.savedUri,
+          item.mimeType,
+        );
+        if (error != null && context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('باز کردن فایل ممکن نشد: $error')),
+          );
+        }
+        break;
+      case 'share':
+        await DownloadService.shareFile(item.savedUri, item.mimeType);
+        break;
+      case 'delete':
+        final yes = await showDialog<bool>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text('حذف فایل؟'),
+            content: Text('«${item.name}» هم از حافظه گوشی و هم از تاریخچه حذف می‌شود.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('انصراف'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                style: FilledButton.styleFrom(backgroundColor: _danger),
+                child: const Text('حذف'),
+              ),
+            ],
+          ),
+        );
+        if (yes == true) {
+          await DownloadStore.instance.remove(item.id, item.savedUri);
+        }
+        break;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final date = DateTime.tryParse(item.date);
@@ -1460,7 +1865,9 @@ class _HistoryCard extends StatelessWidget {
                 ? Icons.movie_rounded
                 : item.mimeType.startsWith('audio/')
                     ? Icons.music_note_rounded
-                    : Icons.insert_drive_file_rounded,
+                    : item.mimeType.startsWith('image/')
+                        ? Icons.image_rounded
+                        : Icons.insert_drive_file_rounded,
             color: _success,
           ),
           const SizedBox(width: 12),
@@ -1487,7 +1894,46 @@ class _HistoryCard extends StatelessWidget {
               ],
             ),
           ),
-          const Icon(Icons.check_circle_rounded, color: _success, size: 21),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert_rounded, color: _muted),
+            color: _surface2,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+            onSelected: (value) => _handleAction(context, value),
+            itemBuilder: (_) => const [
+              PopupMenuItem(
+                value: 'open',
+                child: Row(
+                  children: [
+                    Icon(Icons.open_in_new_rounded, size: 18),
+                    SizedBox(width: 10),
+                    Text('باز کردن'),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'share',
+                child: Row(
+                  children: [
+                    Icon(Icons.share_rounded, size: 18),
+                    SizedBox(width: 10),
+                    Text('اشتراک‌گذاری'),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'delete',
+                child: Row(
+                  children: [
+                    Icon(Icons.delete_outline_rounded, size: 18, color: _danger),
+                    SizedBox(width: 10),
+                    Text('حذف', style: TextStyle(color: _danger)),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -1558,10 +2004,21 @@ class _SettingsTabState extends State<SettingsTab> {
           _SettingsHeader(
             icon: Icons.settings_suggest_rounded,
             title: 'Floating Downloader',
-            subtitle: 'نسخه 3.0 • Android',
+            subtitle: 'نسخه 3.1 • Android',
           ),
           const SizedBox(height: 16),
           const _SectionTitle(title: 'دانلود'),
+          ValueListenableBuilder<bool>(
+            valueListenable: SettingsStore.wifiOnly,
+            builder: (context, value, _) => _SettingSwitchTile(
+              icon: Icons.wifi_rounded,
+              title: 'دانلود فقط با Wi-Fi',
+              subtitle: 'برای جلوگیری از مصرف اینترنت موبایل',
+              color: _primary,
+              value: value,
+              onChanged: SettingsStore.setWifiOnly,
+            ),
+          ),
           _SettingTile(
             icon: Icons.folder_open_rounded,
             title: 'محل ذخیره',
@@ -1577,8 +2034,14 @@ class _SettingsTabState extends State<SettingsTab> {
           _SettingTile(
             icon: Icons.radar_rounded,
             title: 'تشخیص خودکار رسانه',
-            subtitle: 'در مرورگر هوشمند فعال است و لینک‌های مستقیم را بررسی می‌کند.',
+            subtitle: 'در مرورگر هوشمند فعال است و Referer/Cookie واقعی صفحه را هم برای دانلود ارسال می‌کند.',
             color: _primary,
+          ),
+          _SettingTile(
+            icon: Icons.ios_share_rounded,
+            title: 'اشتراک‌گذاری از اپ‌های دیگر',
+            subtitle: 'یک لینک را در هر اپی (مرورگر، تلگرام و…) به Floating Downloader Share کنید.',
+            color: _cyan,
           ),
           const SizedBox(height: 16),
           const _SectionTitle(title: 'پشتیبانی'),
@@ -1595,16 +2058,16 @@ class _SettingsTabState extends State<SettingsTab> {
           _SettingTile(
             icon: Icons.info_outline_rounded,
             title: 'درباره برنامه',
-            subtitle: 'نسخه 3.0.0',
+            subtitle: 'نسخه 3.1.0',
             color: _muted,
             onTap: () => showAboutDialog(
               context: context,
               applicationName: 'Floating Downloader',
-              applicationVersion: '3.0.0',
+              applicationVersion: '3.1.0',
               applicationIcon: const Icon(Icons.download_rounded, color: _primary),
               children: const [
                 Text(
-                  'دانلودر اندرویدی با دانلود واقعی، MediaStore، مرورگر داخلی و پنجره شناور.',
+                  'دانلودر اندرویدی با دانلود واقعیِ اعتبارسنجی‌شده (بدون فایل جعلی)، MediaStore، مرورگر داخلی با ارسال Referer/Cookie، دریافت لینک با Share از سایر اپ‌ها، و پنجره شناور.',
                 ),
               ],
             ),
@@ -1708,6 +2171,54 @@ class _SettingTile extends StatelessWidget {
         trailing: onTap == null
             ? null
             : const Icon(Icons.chevron_left_rounded, color: _muted),
+      ),
+    );
+  }
+}
+
+class _SettingSwitchTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Color color;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  const _SettingSwitchTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.color,
+    required this.value,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: _surface,
+      elevation: 0,
+      margin: const EdgeInsets.only(bottom: 8),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(17)),
+      child: SwitchListTile(
+        value: value,
+        onChanged: onChanged,
+        activeColor: color,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 3),
+        secondary: Container(
+          width: 42,
+          height: 42,
+          decoration: BoxDecoration(
+            color: color.withOpacity(.10),
+            borderRadius: BorderRadius.circular(13),
+          ),
+          child: Icon(icon, color: color, size: 21),
+        ),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+        subtitle: Text(
+          subtitle,
+          style: const TextStyle(color: _muted, fontSize: 10),
+        ),
       ),
     );
   }
