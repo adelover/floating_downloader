@@ -27,14 +27,6 @@ plugins {
     id "org.jetbrains.kotlin.android" version "1.9.23" apply false
 }
 
-dependencyResolutionManagement {
-    repositoriesMode.set(RepositoriesMode.PREFER_FALLBACK)
-    repositories {
-        google()
-        mavenCentral()
-    }
-}
-
 
 rootProject.name = "floating_downloader"
 include ":app"
