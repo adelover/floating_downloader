@@ -28,12 +28,13 @@ plugins {
 }
 
 dependencyResolutionManagement {
-    repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
+    repositoriesMode.set(RepositoriesMode.FALLBACK)
     repositories {
         google()
         mavenCentral()
     }
 }
+
 
 rootProject.name = "floating_downloader"
 include ":app"
