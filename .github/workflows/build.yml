@@ -33,6 +33,10 @@ jobs:
       - name: Get packages
         run: flutter pub get
 
+      - name: Ensure Gradle wrapper exists
+        working-directory: android
+        run: gradle wrapper --gradle-version 8.12 --distribution-type all
+
       - name: Generate launcher icons
         run: dart run flutter_launcher_icons
 

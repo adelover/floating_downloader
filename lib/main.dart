@@ -903,7 +903,7 @@ class PlatformExtractor {
   }
 
   static int _qualityRank(String label) {
-    final m = RegExp(r'(\\d{3,4})p').firstMatch(label);
+    final m = RegExp(r'(\d{3,4})p').firstMatch(label);
     return int.tryParse(m?.group(1) ?? '') ?? 0;
   }
 

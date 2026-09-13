@@ -61,3 +61,64 @@ flutter analyze
 flutter test
 flutter build apk --release
 ```
+
+---
+
+# اصلاحات دور دوم (بررسی مستقل کد فعلی)
+
+نسخه‌ی ZIP قبلی («fixed») با اینکه در `FIX_REPORT.md` ادعا شده بود کامل و آماده‌ی build است،
+در عمل چند باگ واقعی داشت که مانع از build شدن یا کارکرد درست برنامه می‌شد. این‌ها همگی
+بدون تغییر ساختار کلی پروژه (همان معماری تک‌فایلی `lib/main.dart` + همان تنظیمات Android) برطرف شدند:
+
+1. **باگ بحرانی build — پکیج‌های گم‌شده در `pubspec.yaml`**: `lib/main.dart` پکیج‌های
+   `flutter_inappwebview` (مرورگر داخلی) و `flutter_overlay_window` (پنجره شناور) را
+   import و به‌طور کامل استفاده می‌کرد، ولی این دو در `pubspec.yaml` اصلاً اضافه نشده بودند.
+   سمت Android (AndroidManifest، MainActivity) درست تنظیم شده بود، فقط پکیج‌های Flutter آن
+   کم بود. نتیجه: `flutter pub get` و هر build با خطای «Target of URI doesn't exist» شکست
+   می‌خورد. رفع شد با اضافه‌کردن `flutter_inappwebview: ^6.1.5` و
+   `flutter_overlay_window: ^0.5.0`.
+
+2. **کد مرده/تکراری و گمراه‌کننده**: فایل `lib/services/download_service.dart` یک نسخه‌ی
+   قدیمی و کاملاً جدا از `DownloadService`/`MediaInfo` واقعی داخل `main.dart` بود (اسم‌های
+   کلاس تکراری)، هیچ‌جا import نمی‌شد، از `youtube_explode_dart` قدیمی برای دانلود مستقیم
+   استفاده می‌کرد (دقیقاً همان چیزی که در همین فایل ادعا شده بود حذف شده) و باگ خودش را هم
+   داشت (فایل‌های mp3 را با `Gal.putImage` ذخیره می‌کرد). این فایل حذف شد و به همراه آن
+   پکیج‌های `path_provider`، `permission_handler` و `gal` هم از `pubspec.yaml` پاک شدند،
+   چون تنها مصرف‌کننده‌شان همین فایل بود.
+
+3. **باگ منطقی — مرتب‌سازی کیفیت یوتیوب اشتباه بود**: در `PlatformExtractor._qualityRank`
+   الگوی Regex به‌صورت `r'(\\d{3,4})p'` نوشته شده بود که در یک raw string معادل «یک بک‌اسلش
+   واقعی + حرف d» است، نه رقم؛ یعنی هیچ‌وقت با برچسب‌هایی مثل `720p` مطابقت پیدا نمی‌کرد و
+   نتیجه‌اش این بود که کیفیت‌های ویدیوی یوتیوب هیچ‌وقت واقعاً بر اساس رزولوشن مرتب نمی‌شدند.
+   به `r'(\d{3,4})p'` اصلاح شد.
+
+4. **مرورگر/دانلود لینک‌های HTTP ساده کار نمی‌کرد**: در AndroidManifest
+   `android:usesCleartextTraffic="false"` بود، در حالی که خود `DownloadService.download`
+   صراحتاً اسکیم `http` را هم قبول می‌کند و مرورگر داخلی قرار است هر سایتی را باز کند. با
+   کلایرتکست خاموش، اندروید هر درخواست HTTP (بدون TLS) را در سطح سیستم‌عامل بلاک می‌کند،
+   حتی اگر کد Dart اجازه‌اش را بدهد. به `true` تغییر یافت تا لینک‌های http هم واقعاً کار کنند.
+
+5. **باگ CI/Build — Gradle Wrapper اصلاً داخل ZIP نبود**: نه `android/gradlew`، نه
+   `android/gradlew.bat` و نه `android/gradle/wrapper/gradle-wrapper.jar` در پروژه وجود
+   داشتند (فقط `gradle-wrapper.properties` بود). بدون این فایل‌ها هر build (چه در
+   GitHub Actions چه لوکال) بلافاصله با خطای «Cannot find executable for gradlew» شکست
+   می‌خورد. یک مرحله‌ی جدید به `.github/workflows/build.yml` اضافه شد که قبل از build با
+   Gradle از‌پیش‌نصب‌شده‌ی خود ranner (`gradle wrapper --gradle-version 8.12
+   --distribution-type all`) این فایل‌ها را می‌سازد. **برای build لوکال (مثلاً از طریق
+   Termux/proot با Flutter نصب‌شده)**، اگر به همین خطا برخوردید، یک‌بار از ریشه‌ی پروژه
+   `flutter create .` را اجرا کنید (فایل‌های lib و تنظیمات فعلی شما دست‌نخورده می‌مانند و
+   فقط فایل‌های پلتفرمی گم‌شده مثل Gradle Wrapper بازسازی می‌شوند)، یا مستقیماً در پوشه‌ی
+   `android` دستور `gradle wrapper --gradle-version 8.12 --distribution-type all` را
+   بزنید.
+
+6. **نظافت مخزن**: یک `README(1).md` تکراری (نسخه‌ی ناقص‌تر همان `README.md`) حذف شد و یک
+   `.gitignore` استاندارد Flutter اضافه شد، چون پروژه قبلاً هیچ `.gitignore`ای نداشت و خطر
+   داشت فایل‌های build/امضا به‌اشتباه commit شوند. طبق همین `.gitignore`، فایل‌های
+   `android/gradlew`، `gradlew.bat` و `gradle-wrapper.jar` عمداً از گیت کنار گذاشته شده‌اند
+   (چون هر بار در CI ساخته می‌شوند)؛ برای build لوکال طبق بند ۵ عمل کنید.
+
+## چیزهایی که تغییر داده نشد
+
+- معماری کلی (`lib/main.dart` تک‌فایلی، ساختار Android، اسم پکیج، نسخه‌ها) دست‌نخورده ماند.
+- منطق اصلی دانلود/اعتبارسنجی فایل که در دور اول درست پیاده‌سازی شده بود (بدون فایل جعلی،
+  MediaStore، بررسی Content-Type و Magic Number) همان‌طور باقی ماند چون مشکلی نداشت.
