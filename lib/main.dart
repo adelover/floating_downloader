@@ -1982,7 +1982,7 @@ class BrowserTab extends StatefulWidget {
   State<BrowserTab> createState() => _BrowserTabState();
 }
 
-_browserUserAgent =
+final _browserUserAgent =
     'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/131 Mobile Safari/537.36';
 
 class _DetectedMedia {
