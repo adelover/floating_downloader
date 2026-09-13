@@ -9,6 +9,7 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:youtube_explode_dart/youtube_explode_dart.dart' as yt;
 
 /// رنگ‌های حالت تاریک و روشن. همه‌ی ویجت‌های برنامه با همون اسم‌های قبلی
 /// (_bg، _surface, _primary و…) کار می‌کنن؛ فقط این‌ها الان به تنظیمات
@@ -121,6 +122,17 @@ class DownloaderApp extends StatelessWidget {
             behavior: SnackBarBehavior.floating,
             backgroundColor: _surface2,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          ),
+          appBarTheme: AppBarTheme(
+            backgroundColor: _surface,
+            elevation: 0,
+            centerTitle: false,
+            surfaceTintColor: Colors.transparent,
+          ),
+          cardTheme: CardThemeData(
+            color: _surface,
+            elevation: 0,
+            margin: EdgeInsets.zero,
           ),
           navigationBarTheme: NavigationBarThemeData(
             backgroundColor: _surface,
@@ -322,6 +334,8 @@ class SharedLinkBus {
 }
 
 class DownloadService {
+  static final yt.YoutubeExplode _youtube = yt.YoutubeExplode();
+
   static final Dio _dio = Dio(
     BaseOptions(
       connectTimeout: Duration(seconds: 20),
@@ -497,6 +511,87 @@ class DownloadService {
     } catch (_) {}
   }
 
+  static Future<DownloadItem> downloadStream({
+    required yt.StreamInfo streamInfo,
+    required String title,
+    void Function(double progress)? onProgress,
+  }) async {
+    if (SettingsStore.wifiOnly.value) {
+      final wifi = await isWifiConnected();
+      if (!wifi) {
+        throw Exception(
+          'طبق تنظیمات شما، دانلود فقط با Wi-Fi انجام می‌شود. به Wi-Fi وصل شوید یا این گزینه را در تنظیمات خاموش کنید.',
+        );
+      }
+    }
+
+    final id = DateTime.now().microsecondsSinceEpoch.toString();
+    final isAudio = streamInfo is yt.AudioOnlyStreamInfo;
+    final container = streamInfo.container.name.toLowerCase();
+    final ext = container == 'webm' ? '.webm' : (isAudio ? '.m4a' : '.mp4');
+    final mime = container == 'webm'
+        ? (isAudio ? 'audio/webm' : 'video/webm')
+        : (isAudio ? 'audio/mp4' : 'video/mp4');
+    final suffix = isAudio ? 'audio' : streamInfo.qualityLabel;
+    final fileName = '${sanitizeFileName(title)}_$suffix$ext';
+    final cacheDir = await _cacheDirectory();
+    final tempPath = '$cacheDir${Platform.pathSeparator}$id.part';
+
+    DownloadStore.instance.start(id, fileName);
+    try {
+      final file = File(tempPath);
+      final sink = file.openWrite();
+      var received = 0;
+      final total = streamInfo.size.totalBytes;
+
+      final stream = _youtube.streamsClient.get(streamInfo);
+      await for (final chunk in stream) {
+        received += chunk.length;
+        sink.add(chunk);
+        if (total > 0) {
+          final value = received / total;
+          DownloadStore.instance.progress(id, value);
+          onProgress?.call(value.clamp(0.0, 1.0));
+        }
+      }
+      await sink.flush();
+      await sink.close();
+
+      if (!await file.exists() || await file.length() == 0) {
+        throw Exception('استریم یوتیوب خالی یا ناقص بود.');
+      }
+
+      final savedUri = await _saveToDownloads(
+        sourcePath: tempPath,
+        fileName: fileName,
+        mimeType: mime,
+      );
+      final bytes = await file.length();
+      try {
+        await file.delete();
+      } catch (_) {}
+
+      final item = DownloadItem(
+        id: id,
+        name: fileName,
+        url: streamInfo.url.toString(),
+        savedUri: savedUri,
+        date: DateTime.now().toIso8601String(),
+        bytes: bytes,
+        mimeType: mime,
+      );
+      await DownloadStore.instance.add(item);
+      DownloadStore.instance.finish(id);
+      return item;
+    } catch (error) {
+      DownloadStore.instance.fail(id);
+      try {
+        await File(tempPath).delete();
+      } catch (_) {}
+      rethrow;
+    }
+  }
+
   static Future<DownloadItem> download({
     required String url,
     String? preferredName,
@@ -602,7 +697,7 @@ class DownloadService {
         mimeType: mimeType,
       );
       final bytes = await file.length();
-      await file.delete().catchError((_) {});
+      try { await file.delete(); } catch (_) {}
 
       final item = DownloadItem(
         id: id,
@@ -618,7 +713,7 @@ class DownloadService {
       return item;
     } catch (error) {
       DownloadStore.instance.fail(id);
-      await File(tempPath).delete().catchError((_) {});
+      try { await File(tempPath).delete(); } catch (_) {}
       rethrow;
     }
   }
@@ -718,12 +813,16 @@ class MediaFormat {
   final String url;
   final String mimeType;
   final String ext;
+  /// For YouTube this contains the real StreamInfo so we don't lose the
+  /// signed URL/stream metadata between analysis and download.
+  final Object? streamData;
 
   const MediaFormat({
     required this.label,
     required this.url,
     required this.mimeType,
     required this.ext,
+    this.streamData,
   });
 }
 
@@ -792,27 +891,101 @@ class PlatformExtractor {
   }
 
   // ---------------------------------------------------------------------
-  // یوتیوب — فقط متادیتا (بدون دانلود فایل، طبق محدودیت‌های یوتیوب)
+  // یوتیوب — متادیتا + کیفیت‌های واقعی StreamManifest
   // ---------------------------------------------------------------------
+  static final yt.YoutubeExplode _youtube = yt.YoutubeExplode();
+
+  static String _streamSize(int bytes) {
+    if (bytes <= 0) return 'حجم نامشخص';
+    final mb = bytes / (1024 * 1024);
+    if (mb < 1024) return '${mb.toStringAsFixed(1)} MB';
+    return '${(mb / 1024).toStringAsFixed(2)} GB';
+  }
+
+  static int _qualityRank(String label) {
+    final m = RegExp(r'(\\d{3,4})p').firstMatch(label);
+    return int.tryParse(m?.group(1) ?? '') ?? 0;
+  }
+
   static Future<MediaInfo> youtubeMeta(String url) async {
-    final resp = await _http.get(
-      'https://www.youtube.com/oembed',
-      queryParameters: {'url': url, 'format': 'json'},
-    );
-    if (resp.statusCode != 200 || resp.data is! Map) {
+    try {
+      final video = await _youtube.videos.get(url);
+      final manifest = await _youtube.videos.streamsClient.getManifest(
+        video.id,
+        fullManifest: true,
+      );
+
+      final formats = <MediaFormat>[];
+
+      // Muxed streams are the safest one-file YouTube downloads because they
+      // already contain both audio and video. Higher qualities on YouTube are
+      // commonly video-only and require a separate mux/remux step.
+      final muxed = manifest.muxed.toList()
+        ..sort((a, b) => _qualityRank(b.qualityLabel)
+            .compareTo(_qualityRank(a.qualityLabel)));
+
+      final seenVideo = <String>{};
+      for (final stream in muxed) {
+        final quality = stream.qualityLabel;
+        if (!seenVideo.add(quality)) continue;
+        final ext = stream.container.name.toLowerCase() == 'webm'
+            ? '.webm'
+            : '.mp4';
+        final mime = ext == '.webm' ? 'video/webm' : 'video/mp4';
+        formats.add(
+          MediaFormat(
+            label: 'ویدیو $quality • ${_streamSize(stream.size.totalBytes)}',
+            url: stream.url.toString(),
+            mimeType: mime,
+            ext: ext,
+            streamData: stream,
+          ),
+        );
+      }
+
+      final audio = manifest.audioOnly.toList()
+        ..sort((a, b) => b.bitrate.kiloBitsPerSecond
+            .compareTo(a.bitrate.kiloBitsPerSecond));
+
+      final seenAudio = <int>{};
+      for (final stream in audio) {
+        final kbps = stream.bitrate.kiloBitsPerSecond;
+        if (!seenAudio.add(kbps)) continue;
+        final ext = stream.container.name.toLowerCase() == 'webm'
+            ? '.webm'
+            : '.m4a';
+        final mime = ext == '.webm' ? 'audio/webm' : 'audio/mp4';
+        formats.add(
+          MediaFormat(
+            label: 'صوت AAC ${kbps} kbps • ${_streamSize(stream.size.totalBytes)}',
+            url: stream.url.toString(),
+            mimeType: mime,
+            ext: ext,
+            streamData: stream,
+          ),
+        );
+      }
+
+      if (formats.isEmpty) {
+        throw PlatformExtractorException(
+          'برای این ویدیوی یوتیوب هیچ استریم قابل دانلودی پیدا نشد.',
+        );
+      }
+
+      return MediaInfo(
+        title: video.title,
+        author: video.author,
+        thumbnailUrl: video.thumbnails.highResUrl,
+        formats: formats,
+        sourceUrl: url,
+        referer: url,
+      );
+    } catch (e) {
+      if (e is PlatformExtractorException) rethrow;
       throw PlatformExtractorException(
-        'اطلاعات این ویدیوی یوتیوب پیدا نشد. لینک را بررسی کنید (باید عمومی باشد).',
+        'استخراج یوتیوب ناموفق بود. ممکن است ویدیو خصوصی، محدود یا ساختار YouTube تغییر کرده باشد.\n$e',
       );
     }
-    final data = resp.data as Map;
-    return MediaInfo(
-      title: (data['title'] ?? 'ویدیوی یوتیوب').toString(),
-      author: data['author_name']?.toString(),
-      thumbnailUrl: data['thumbnail_url']?.toString(),
-      formats: const [],
-      sourceUrl: url,
-      referer: url,
-    );
   }
 
   // ---------------------------------------------------------------------
@@ -1496,15 +1669,30 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
               child: _Header(
                 title: 'Floating Downloader',
                 subtitle: 'سریع، تمیز و بدون مسیرهای جعلی',
-                trailing: IconButton(
-                  onPressed: _toggleOverlay,
-                  tooltip: 'پنجره شناور',
-                  icon: Icon(
-                    overlayActive
-                        ? Icons.bubble_chart_rounded
-                        : Icons.bubble_chart_outlined,
-                    color: overlayActive ? _cyan : _muted,
-                  ),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      onPressed: ThemeStore.toggle,
+                      tooltip: ThemeStore.isDark.value ? 'تم روشن' : 'تم تاریک',
+                      icon: Icon(
+                        ThemeStore.isDark.value
+                            ? Icons.light_mode_rounded
+                            : Icons.dark_mode_rounded,
+                        color: _muted,
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: _toggleOverlay,
+                      tooltip: 'پنجره شناور',
+                      icon: Icon(
+                        overlayActive
+                            ? Icons.bubble_chart_rounded
+                            : Icons.bubble_chart_outlined,
+                        color: overlayActive ? _cyan : _muted,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -1881,7 +2069,7 @@ class _StatCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: _surface,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withOpacity(.05)),
+        border: Border.all(color: ThemeStore.isDark.value ? Colors.white.withOpacity(.05) : Colors.black.withOpacity(.06)),
       ),
       child: Row(
         children: [
@@ -1947,7 +2135,7 @@ class _QuickCard extends StatelessWidget {
           padding: EdgeInsets.all(15),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(21),
-            border: Border.all(color: Colors.white.withOpacity(.05)),
+            border: Border.all(color: ThemeStore.isDark.value ? Colors.white.withOpacity(.05) : Colors.black.withOpacity(.06)),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -2359,11 +2547,11 @@ final List<_PlatformDef> _platformDefs = [
   _PlatformDef(
     id: 'youtube',
     title: 'یوتیوب',
-    subtitle: 'فقط اطلاعات + باز کردن در اپ',
+    subtitle: 'استخراج عنوان، کاور و کیفیت واقعی',
     icon: Icons.smart_display_rounded,
     color: Color(0xFFFF0000),
     hint: 'لینک ویدیوی یوتیوب را بچسبانید',
-    downloadable: false,
+    downloadable: true,
     fetch: PlatformExtractor.youtubeMeta,
   ),
   _PlatformDef(
@@ -2478,11 +2666,19 @@ class _PlatformDetailScreenState extends State<PlatformDetailScreen> {
     if (!await DownloadGateService.ensureUnlocked(context)) return;
     setState(() => downloadingFormats.add(format.url));
     try {
-      await DownloadService.download(
-        url: format.url,
-        preferredName: info?.title,
-        headers: {'Referer': info?.referer ?? widget.def.hint},
-      );
+      final stream = format.streamData;
+      if (stream is yt.StreamInfo) {
+        await DownloadService.downloadStream(
+          streamInfo: stream,
+          title: info?.title ?? 'YouTube',
+        );
+      } else {
+        await DownloadService.download(
+          url: format.url,
+          preferredName: info?.title,
+          headers: {'Referer': info?.referer ?? widget.def.hint},
+        );
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('✓ دانلود کامل شد و در Downloads ذخیره شد.')),
@@ -3035,7 +3231,7 @@ class _CardShell extends StatelessWidget {
       decoration: BoxDecoration(
         color: _surface,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white.withOpacity(.05)),
+        border: Border.all(color: ThemeStore.isDark.value ? Colors.white.withOpacity(.05) : Colors.black.withOpacity(.06)),
       ),
       child: child,
     );
@@ -3176,7 +3372,7 @@ class _SettingsHeader extends StatelessWidget {
       decoration: BoxDecoration(
         color: _surface,
         borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: Colors.white.withOpacity(.05)),
+        border: Border.all(color: ThemeStore.isDark.value ? Colors.white.withOpacity(.05) : Colors.black.withOpacity(.06)),
       ),
       child: Row(
         children: [

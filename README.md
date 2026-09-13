@@ -44,3 +44,9 @@ Android با `MediaStore.Downloads` فایل را در پوشه Downloads عمو
 4. فعال‌سازی Overlay و دانلود از پنجره شناور.
 5. بررسی فایل در برنامه Files > Downloads.
 6. اجرای `flutter analyze` بدون خطا.
+
+
+### آخرین اصلاحات
+- YouTube quality extraction with real StreamManifest
+- Direct StreamInfo downloads with progress
+- Dark/Light Telegram-style UI switch
