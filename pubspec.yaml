@@ -1,7 +1,7 @@
 name: floating_downloader
 description: A modern Android downloader with a floating overlay and media-aware browser.
 publish_to: "none"
-version: 3.1.0+4
+version: 3.3.0+6
 
 environment:
   sdk: ">=3.6.0 <4.0.0"

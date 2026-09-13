@@ -10,21 +10,50 @@ import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-const _bg = Color(0xFF090B12);
-const _surface = Color(0xFF121722);
-const _surface2 = Color(0xFF181E2B);
-const _primary = Color(0xFF7C5CFF);
-const _cyan = Color(0xFF38D9FF);
-const _success = Color(0xFF36D399);
-const _danger = Color(0xFFFF5D73);
-const _muted = Color(0xFF8D96A8);
+/// رنگ‌های حالت تاریک و روشن. همه‌ی ویجت‌های برنامه با همون اسم‌های قبلی
+/// (_bg، _surface, _primary و…) کار می‌کنن؛ فقط این‌ها الان به تنظیمات
+/// تم واکنش نشون می‌دن به‌جای اینکه یک رنگ ثابت باشن.
+class ThemeStore {
+  static final ValueNotifier<bool> isDark = ValueNotifier<bool>(true);
 
-const _storageChannel = MethodChannel('com.example.floating_downloader/storage');
+  static Future<void> load() async {
+    final prefs = await SharedPreferences.getInstance();
+    isDark.value = prefs.getBool('dark_theme') ?? true;
+  }
+
+  static Future<void> setDark(bool value) async {
+    isDark.value = value;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('dark_theme', value);
+  }
+
+  static Future<void> toggle() => setDark(!isDark.value);
+}
+
+Color get _bg =>
+    ThemeStore.isDark.value ? Color(0xFF090B12) : Color(0xFFF3F4FA);
+Color get _surface =>
+    ThemeStore.isDark.value ? Color(0xFF121722) : Color(0xFFFFFFFF);
+Color get _surface2 =>
+    ThemeStore.isDark.value ? Color(0xFF181E2B) : Color(0xFFEEF0F8);
+Color get _primary => Color(0xFF7C5CFF);
+Color get _cyan => Color(0xFF2AABEE);
+Color get _success =>
+    ThemeStore.isDark.value ? Color(0xFF36D399) : Color(0xFF13A76F);
+Color get _danger =>
+    ThemeStore.isDark.value ? Color(0xFFFF5D73) : Color(0xFFE3324B);
+Color get _muted =>
+    ThemeStore.isDark.value ? Color(0xFF8D96A8) : Color(0xFF6B7280);
+Color get _bubbleOut =>
+    ThemeStore.isDark.value ? Color(0xFF2B3547) : Color(0xFFE1F3FF);
+
+final _storageChannel = MethodChannel('com.example.floating_downloader/storage');
 
 @pragma('vm:entry-point')
-void overlayMain() {
+Future<void> overlayMain() async {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const Directionality(
+  await DownloadGateService.load();
+  runApp(Directionality(
     textDirection: TextDirection.rtl,
     child: MaterialApp(
       debugShowCheckedModeBanner: false,
@@ -36,81 +65,98 @@ void overlayMain() {
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SettingsStore.load();
+  await ThemeStore.load();
+  await DownloadGateService.load();
   await SharedLinkBus.init();
-  runApp(const DownloaderApp());
+  runApp(DownloaderApp());
 }
 
 class DownloaderApp extends StatelessWidget {
-  const DownloaderApp({super.key});
+  DownloaderApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final base = ThemeData(
-      brightness: Brightness.dark,
-      scaffoldBackgroundColor: _bg,
-      fontFamily: 'sans',
-      colorScheme: const ColorScheme.dark(
-        primary: _primary,
-        secondary: _cyan,
-        surface: _surface,
-        error: _danger,
-      ),
-      splashFactory: InkSparkle.splashFactory,
-      inputDecorationTheme: InputDecorationTheme(
-        filled: true,
-        fillColor: _surface,
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(18),
-          borderSide: BorderSide.none,
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(18),
-          borderSide: BorderSide.none,
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(18),
-          borderSide: const BorderSide(color: _primary, width: 1.2),
-        ),
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 18,
-          vertical: 17,
-        ),
-      ),
-      snackBarTheme: SnackBarThemeData(
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: _surface2,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      ),
-      navigationBarTheme: NavigationBarThemeData(
-        backgroundColor: _surface,
-        indicatorColor: _primary.withOpacity(.18),
-        height: 72,
-        labelTextStyle: WidgetStateProperty.resolveWith(
-          (states) => TextStyle(
-            color: states.contains(WidgetState.selected)
-                ? Colors.white
-                : _muted,
-            fontSize: 11,
-            fontWeight: FontWeight.w700,
+    return ValueListenableBuilder<bool>(
+      valueListenable: ThemeStore.isDark,
+      builder: (context, isDark, _) {
+        final base = ThemeData(
+          brightness: isDark ? Brightness.dark : Brightness.light,
+          scaffoldBackgroundColor: _bg,
+          fontFamily: 'sans',
+          colorScheme: isDark
+              ? ColorScheme.dark(
+                  primary: _primary,
+                  secondary: _cyan,
+                  surface: _surface,
+                  error: _danger,
+                )
+              : ColorScheme.light(
+                  primary: _primary,
+                  secondary: _cyan,
+                  surface: _surface,
+                  error: _danger,
+                ),
+          splashFactory: InkSparkle.splashFactory,
+          inputDecorationTheme: InputDecorationTheme(
+            filled: true,
+            fillColor: _surface,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(18),
+              borderSide: BorderSide.none,
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(18),
+              borderSide: BorderSide.none,
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(18),
+              borderSide: BorderSide(color: _primary, width: 1.2),
+            ),
+            contentPadding: EdgeInsets.symmetric(
+              horizontal: 18,
+              vertical: 17,
+            ),
           ),
-        ),
-        iconTheme: WidgetStateProperty.resolveWith(
-          (states) => IconThemeData(
-            color: states.contains(WidgetState.selected) ? _cyan : _muted,
+          snackBarTheme: SnackBarThemeData(
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: _surface2,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
           ),
-        ),
-      ),
-    );
+          navigationBarTheme: NavigationBarThemeData(
+            backgroundColor: _surface,
+            indicatorColor: _primary.withOpacity(.18),
+            height: 72,
+            labelTextStyle: WidgetStateProperty.resolveWith(
+              (states) => TextStyle(
+                color: states.contains(WidgetState.selected)
+                    ? _primary
+                    : _muted,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            iconTheme: WidgetStateProperty.resolveWith(
+              (states) => IconThemeData(
+                color: states.contains(WidgetState.selected) ? _cyan : _muted,
+              ),
+            ),
+          ),
+        );
 
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'Floating Downloader',
-      theme: base,
-      builder: (context, child) => Directionality(
-        textDirection: TextDirection.rtl,
-        child: child ?? const SizedBox.shrink(),
-      ),
-      home: const MainScreen(),
+        return MaterialApp(
+          debugShowCheckedModeBanner: false,
+          title: 'Floating Downloader',
+          theme: base,
+          builder: (context, child) => Directionality(
+            textDirection: TextDirection.rtl,
+            child: child ?? SizedBox.shrink(),
+          ),
+          home: KeyedSubtree(
+            key: ValueKey(isDark),
+            child: MainScreen(),
+          ),
+        );
+      },
     );
   }
 }
@@ -124,7 +170,7 @@ class DownloadItem {
   final int bytes;
   final String mimeType;
 
-  const DownloadItem({
+  DownloadItem({
     required this.id,
     required this.name,
     required this.url,
@@ -278,9 +324,9 @@ class SharedLinkBus {
 class DownloadService {
   static final Dio _dio = Dio(
     BaseOptions(
-      connectTimeout: const Duration(seconds: 20),
-      receiveTimeout: const Duration(minutes: 30),
-      sendTimeout: const Duration(seconds: 30),
+      connectTimeout: Duration(seconds: 20),
+      receiveTimeout: Duration(minutes: 30),
+      sendTimeout: Duration(seconds: 30),
       followRedirects: true,
       maxRedirects: 8,
       validateStatus: (status) => status != null && status >= 200 && status < 400,
@@ -579,7 +625,7 @@ class DownloadService {
 }
 
 class MainScreen extends StatefulWidget {
-  const MainScreen({super.key});
+  MainScreen({super.key});
 
   @override
   State<MainScreen> createState() => _MainScreenState();
@@ -590,9 +636,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   late final pages = [
     HomeTab(key: HomeTab.globalKey),
-    const BrowserTab(),
-    const HistoryTab(),
-    const SettingsTab(),
+    PlatformsTab(),
+    BrowserTab(),
+    HistoryTab(),
+    SettingsTab(),
   ];
 
   @override
@@ -633,11 +680,16 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       bottomNavigationBar: NavigationBar(
         selectedIndex: index,
         onDestinationSelected: (value) => setState(() => index = value),
-        destinations: const [
+        destinations: [
           NavigationDestination(
             icon: Icon(Icons.space_dashboard_outlined),
             selectedIcon: Icon(Icons.space_dashboard_rounded),
             label: 'خانه',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.apps_outlined),
+            selectedIcon: Icon(Icons.apps_rounded),
+            label: 'پلتفرم‌ها',
           ),
           NavigationDestination(
             icon: Icon(Icons.travel_explore_outlined),
@@ -655,6 +707,632 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             label: 'تنظیمات',
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// یک فرمت/کیفیت قابل‌دانلود از یک رسانه (مثلاً «۷۲۰p» یا «۱۲۸kbps»).
+class MediaFormat {
+  final String label;
+  final String url;
+  final String mimeType;
+  final String ext;
+
+  const MediaFormat({
+    required this.label,
+    required this.url,
+    required this.mimeType,
+    required this.ext,
+  });
+}
+
+/// نتیجه‌ی استخراج یک لینک از یک پلتفرم: عنوان، صاحب محتوا، کاور، و
+/// فرمت‌های قابل‌دانلود (اگر پلتفرم اجازه بده).
+class MediaInfo {
+  final String title;
+  final String? author;
+  final String? thumbnailUrl;
+  final List<MediaFormat> formats;
+  final String sourceUrl;
+  final String referer;
+
+  const MediaInfo({
+    required this.title,
+    this.author,
+    this.thumbnailUrl,
+    required this.formats,
+    required this.sourceUrl,
+    required this.referer,
+  });
+}
+
+class PlatformExtractorException implements Exception {
+  final String message;
+  const PlatformExtractorException(this.message);
+  @override
+  String toString() => message;
+}
+
+/// استخراج‌کننده‌ی مخصوص هر پلتفرم. هر متد کاملاً مستقل از بقیه است تا
+/// تغییر/خرابی یک سایت روی بقیه اثر نذاره.
+class PlatformExtractor {
+  static final Dio _http = Dio(
+    BaseOptions(
+      connectTimeout: Duration(seconds: 15),
+      receiveTimeout: Duration(seconds: 20),
+      headers: {
+        'User-Agent': _browserUserAgent,
+        'Accept': 'text/html,application/json,*/*',
+      },
+      validateStatus: (s) => s != null && s < 500,
+    ),
+  );
+
+  static String? _metaTag(String html, String property) {
+    final re = RegExp(
+      '<meta[^>]+property=["\']$property["\'][^>]+content=["\']([^"\']*)["\']',
+      caseSensitive: false,
+    );
+    var m = re.firstMatch(html);
+    if (m == null) {
+      // بعضی صفحات ترتیب content/property را برعکس می‌نویسند.
+      final re2 = RegExp(
+        '<meta[^>]+content=["\']([^"\']*)["\'][^>]+property=["\']$property["\']',
+        caseSensitive: false,
+      );
+      m = re2.firstMatch(html);
+    }
+    if (m == null) return null;
+    return m
+        .group(1)
+        ?.replaceAll('&amp;', '&')
+        .replaceAll('&quot;', '"')
+        .replaceAll('&#039;', "'");
+  }
+
+  // ---------------------------------------------------------------------
+  // یوتیوب — فقط متادیتا (بدون دانلود فایل، طبق محدودیت‌های یوتیوب)
+  // ---------------------------------------------------------------------
+  static Future<MediaInfo> youtubeMeta(String url) async {
+    final resp = await _http.get(
+      'https://www.youtube.com/oembed',
+      queryParameters: {'url': url, 'format': 'json'},
+    );
+    if (resp.statusCode != 200 || resp.data is! Map) {
+      throw PlatformExtractorException(
+        'اطلاعات این ویدیوی یوتیوب پیدا نشد. لینک را بررسی کنید (باید عمومی باشد).',
+      );
+    }
+    final data = resp.data as Map;
+    return MediaInfo(
+      title: (data['title'] ?? 'ویدیوی یوتیوب').toString(),
+      author: data['author_name']?.toString(),
+      thumbnailUrl: data['thumbnail_url']?.toString(),
+      formats: const [],
+      sourceUrl: url,
+      referer: url,
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // اسپاتیفای — فقط متادیتا (فایل صوتی رمزگذاری‌شده و غیرقابل‌استخراج است)
+  // ---------------------------------------------------------------------
+  static Future<MediaInfo> spotifyMeta(String url) async {
+    final resp = await _http.get(
+      'https://open.spotify.com/oembed',
+      queryParameters: {'url': url},
+    );
+    if (resp.statusCode != 200 || resp.data is! Map) {
+      throw PlatformExtractorException(
+        'اطلاعات این آیتم اسپاتیفای پیدا نشد. لینک را بررسی کنید.',
+      );
+    }
+    final data = resp.data as Map;
+    return MediaInfo(
+      title: (data['title'] ?? 'آیتم اسپاتیفای').toString(),
+      author: data['provider_name']?.toString(),
+      thumbnailUrl: data['thumbnail_url']?.toString(),
+      formats: const [],
+      sourceUrl: url,
+      referer: url,
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // اینستاگرام — از تگ‌های og:video / og:image صفحه‌ی عمومی پست
+  // ---------------------------------------------------------------------
+  static Future<MediaInfo> instagram(String url) async {
+    final resp = await _http.get(url);
+    if (resp.statusCode != 200 || resp.data is! String) {
+      throw PlatformExtractorException(
+        'صفحه‌ی اینستاگرام بارگذاری نشد. ممکن است پست خصوصی باشد یا لینک اشتباه باشد.',
+      );
+    }
+    final html = resp.data as String;
+    final title = _metaTag(html, 'og:title') ?? 'پست اینستاگرام';
+    final videoUrl = _metaTag(html, 'og:video');
+    final imageUrl = _metaTag(html, 'og:image');
+
+    if (videoUrl == null && imageUrl == null) {
+      throw PlatformExtractorException(
+        'رسانه‌ای در این پست پیدا نشد. اگر پست خصوصی یا استوری است، اینستاگرام اجازه‌ی دسترسی عمومی نمی‌دهد.',
+      );
+    }
+
+    final formats = <MediaFormat>[
+      if (videoUrl != null)
+        MediaFormat(
+          label: 'ویدیو (کیفیت اصلی)',
+          url: videoUrl,
+          mimeType: 'video/mp4',
+          ext: '.mp4',
+        ),
+      if (imageUrl != null)
+        MediaFormat(
+          label: videoUrl != null ? 'کاور/تصویر' : 'تصویر (کیفیت اصلی)',
+          url: imageUrl,
+          mimeType: 'image/jpeg',
+          ext: '.jpg',
+        ),
+    ];
+
+    return MediaInfo(
+      title: title,
+      author: null,
+      thumbnailUrl: imageUrl,
+      formats: formats,
+      sourceUrl: url,
+      referer: 'https://www.instagram.com/',
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // تیک‌تاک — ابتدا از JSON داخل صفحه، در صورت شکست از og:video
+  // ---------------------------------------------------------------------
+  static Future<MediaInfo> tiktok(String url) async {
+    final resp = await _http.get(url);
+    if (resp.statusCode != 200 || resp.data is! String) {
+      throw PlatformExtractorException('صفحه‌ی تیک‌تاک بارگذاری نشد.');
+    }
+    final html = resp.data as String;
+
+    String? videoUrl;
+    String? coverUrl;
+    String? title;
+    String? author;
+
+    try {
+      final scriptMatch = RegExp(
+        r'<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>(.*?)</script>',
+        dotAll: true,
+      ).firstMatch(html);
+      if (scriptMatch != null) {
+        final jsonStr = scriptMatch.group(1)!;
+        final data = jsonDecode(jsonStr) as Map;
+        final scope = data['__DEFAULT_SCOPE__'] as Map?;
+        final detail = scope?['webapp.video-detail'] as Map?;
+        final itemStruct = detail?['itemInfo']?['itemStruct'] as Map?;
+        if (itemStruct != null) {
+          final video = itemStruct['video'] as Map?;
+          title = itemStruct['desc']?.toString();
+          author = itemStruct['author']?['uniqueId']?.toString();
+          coverUrl = video?['cover']?.toString() ?? video?['originCover']?.toString();
+          final playAddr = video?['playAddr']?.toString();
+          final downloadAddr = video?['downloadAddr']?.toString();
+          videoUrl = (downloadAddr != null && downloadAddr.isNotEmpty)
+              ? downloadAddr
+              : playAddr;
+        }
+      }
+    } catch (_) {
+      // به روش پشتیبان زیر می‌رویم
+    }
+
+    videoUrl ??= _metaTag(html, 'og:video') ?? _metaTag(html, 'og:video:url');
+    coverUrl ??= _metaTag(html, 'og:image');
+    title ??= _metaTag(html, 'og:title') ?? 'ویدیوی تیک‌تاک';
+
+    if (videoUrl == null || videoUrl.isEmpty) {
+      throw PlatformExtractorException(
+        'لینک ویدیوی واقعی پیدا نشد. تیک‌تاک مدام ساختار صفحه‌اش را تغییر می‌دهد — این لاگ را برای بررسی بفرستید.',
+      );
+    }
+
+    return MediaInfo(
+      title: title,
+      author: author,
+      thumbnailUrl: coverUrl,
+      formats: [
+        MediaFormat(
+          label: 'ویدیو (بدون واترمارک در صورت وجود)',
+          url: videoUrl,
+          mimeType: 'video/mp4',
+          ext: '.mp4',
+        ),
+      ],
+      sourceUrl: url,
+      referer: 'https://www.tiktok.com/',
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // ساندکلاود — گرفتن client_id عمومی از باندل جاوااسکریپت، سپس resolve
+  // ---------------------------------------------------------------------
+  static String? _cachedSoundCloudClientId;
+
+  static Future<String> _soundCloudClientId() async {
+    if (_cachedSoundCloudClientId != null) return _cachedSoundCloudClientId!;
+    final home = await _http.get('https://soundcloud.com');
+    if (home.statusCode != 200 || home.data is! String) {
+      throw PlatformExtractorException('اتصال به SoundCloud ممکن نشد.');
+    }
+    final html = home.data as String;
+    final scriptUrls = RegExp(r'src="(https://a-v2\.sndcdn\.com/assets/[^"]+\.js)"')
+        .allMatches(html)
+        .map((m) => m.group(1)!)
+        .toList();
+
+    for (final scriptUrl in scriptUrls.reversed) {
+      try {
+        final js = await _http.get(scriptUrl);
+        if (js.statusCode != 200 || js.data is! String) continue;
+        final jsText = js.data as String;
+        final m = RegExp(r'client_id\s*[:=]\s*"([a-zA-Z0-9]{16,})"').firstMatch(jsText);
+        if (m != null) {
+          _cachedSoundCloudClientId = m.group(1);
+          return _cachedSoundCloudClientId!;
+        }
+      } catch (_) {
+        continue;
+      }
+    }
+    throw PlatformExtractorException(
+      'پیدا کردن شناسه‌ی دسترسی SoundCloud ممکن نشد. ممکن است ساختار سایت تغییر کرده باشد.',
+    );
+  }
+
+  static Future<MediaInfo> soundcloud(String url) async {
+    final clientId = await _soundCloudClientId();
+    final resolve = await _http.get(
+      'https://api-v2.soundcloud.com/resolve',
+      queryParameters: {'url': url, 'client_id': clientId},
+    );
+    if (resolve.statusCode != 200 || resolve.data is! Map) {
+      throw PlatformExtractorException(
+        'این لینک SoundCloud پیدا نشد یا خصوصی/حذف‌شده است.',
+      );
+    }
+    final track = resolve.data as Map;
+    final title = track['title']?.toString() ?? 'آهنگ SoundCloud';
+    final author = track['user']?['username']?.toString();
+    final artwork = (track['artwork_url'] ?? track['user']?['avatar_url'])
+        ?.toString()
+        .replaceAll('-large.', '-t500x500.');
+
+    final transcodings = (track['media']?['transcodings'] as List?) ?? [];
+    final progressive = transcodings.firstWhere(
+      (t) => (t['format']?['protocol'] == 'progressive'),
+      orElse: () => null,
+    );
+
+    if (progressive == null) {
+      throw PlatformExtractorException(
+        'این آهنگ فقط به‌صورت استریم HLS ارائه شده و امکان دانلود مستقیم آن نیست.',
+      );
+    }
+
+    final streamInfo = await _http.get(
+      progressive['url'].toString(),
+      queryParameters: {'client_id': clientId},
+    );
+    final streamUrl = (streamInfo.data is Map) ? streamInfo.data['url']?.toString() : null;
+    if (streamUrl == null || streamUrl.isEmpty) {
+      throw PlatformExtractorException('گرفتن لینک نهایی فایل صوتی ناموفق بود.');
+    }
+
+    return MediaInfo(
+      title: title,
+      author: author,
+      thumbnailUrl: artwork,
+      formats: [
+        MediaFormat(
+          label: 'MP3 (کیفیت استاندارد)',
+          url: streamUrl,
+          mimeType: 'audio/mpeg',
+          ext: '.mp3',
+        ),
+      ],
+      sourceUrl: url,
+      referer: 'https://soundcloud.com/',
+    );
+  }
+}
+
+/// این‌ها را با کانال و (اختیاری) توکن ربات خودتان جایگزین کنید.
+class TelegramGateConfig {
+  /// یوزرنیم کانال بدون @ — مثلاً برای t.me/gard_config بنویسید gard_config
+  static const channelUsername = 'gard_config';
+  static const channelDisplayName = 'کانال رسمی Floating Downloader';
+
+  /// اختیاری: اگر این ربات را ادمین کانال کنید و توکنش را اینجا بگذارید،
+  /// «تایید عضویت» واقعاً از API تلگرام استعلام می‌گیرد. اگر خالی بماند،
+  /// دکمه‌ی تایید بعد از بازدید از کانال مستقیم ادامه می‌دهد (بدون استعلام).
+  static const botToken = '';
+
+  /// وقتی botToken پر است، این user_id عددی تلگرام کاربر برای استعلام
+  /// getChatMember لازم است. چون این اپ به هویت تلگرام کاربر متصل نیست
+  /// (نیاز به راه‌اندازی Telegram Login با دامنه‌ی واقعی دارد)، این مقدار
+  /// باید جایی در برنامه از کاربر گرفته شود؛ در غیر این صورت استعلام واقعی
+  /// انجام نمی‌شود و به‌صورت شفاف به همان حالت «بدون استعلام» برمی‌گردد.
+  static int? telegramUserId;
+
+  static bool get hasRealVerification => botToken.isNotEmpty && telegramUserId != null;
+}
+
+/// شمارش دانلودهای موفق و قفل‌کردن ادامه‌ی کار تا عضویت در کانال.
+class DownloadGateService {
+  static final ValueNotifier<int> successCount = ValueNotifier<int>(0);
+  static final ValueNotifier<bool> verified = ValueNotifier<bool>(false);
+  static const _threshold = 2;
+
+  static Future<void> load() async {
+    final prefs = await SharedPreferences.getInstance();
+    successCount.value = prefs.getInt('gate_success_count') ?? 0;
+    verified.value = prefs.getBool('gate_verified') ?? false;
+  }
+
+  static bool get isLocked => successCount.value >= _threshold && !verified.value;
+
+  /// بعد از هر دانلود موفق (از هر پلتفرمی) صدا زده می‌شود.
+  static Future<void> registerSuccess() async {
+    successCount.value += 1;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('gate_success_count', successCount.value);
+  }
+
+  /// بررسی واقعی عضویت از طریق Telegram Bot API (در صورت تنظیم‌بودن توکن).
+  /// نتیجه را با پیام دقیق برمی‌گرداند تا هیچ‌چیز نمایشی/جعلی نباشد.
+  static Future<({bool ok, String message})> checkMembership() async {
+    if (!TelegramGateConfig.hasRealVerification) {
+      return (
+        ok: true,
+        message: 'استعلام خودکار فعال نیست؛ بر اساس تایید شما ادامه داده شد.',
+      );
+    }
+    try {
+      final dio = Dio();
+      final resp = await dio.get(
+        'https://api.telegram.org/bot${TelegramGateConfig.botToken}/getChatMember',
+        queryParameters: {
+          'chat_id': '@${TelegramGateConfig.channelUsername}',
+          'user_id': TelegramGateConfig.telegramUserId,
+        },
+      );
+      final data = resp.data;
+      if (data is Map && data['ok'] == true) {
+        final status = data['result']?['status']?.toString() ?? '';
+        final isMember = ['member', 'administrator', 'creator'].contains(status);
+        return (
+          ok: isMember,
+          message: isMember
+              ? 'عضویت شما تایید شد.'
+              : 'شما هنوز عضو کانال نیستید. لطفاً ابتدا عضو شوید.',
+        );
+      }
+      return (
+        ok: false,
+        message: data is Map ? (data['description']?.toString() ?? 'خطای نامشخص از تلگرام.') : 'خطای نامشخص از تلگرام.',
+      );
+    } catch (e) {
+      return (ok: false, message: 'استعلام تلگرام ناموفق بود: ${e.toString()}');
+    }
+  }
+
+  static Future<void> markVerified() async {
+    verified.value = true;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('gate_verified', true);
+  }
+
+  /// اگر قفل است، صفحه‌ی قفل را نشان می‌دهد و صبر می‌کند تا کاربر رد شود.
+  /// خروجی true یعنی حالا اجازه‌ی ادامه‌ی کار دارد.
+  static Future<bool> ensureUnlocked(BuildContext context) async {
+    if (!isLocked) return true;
+    final result = await Navigator.of(context).push<bool>(
+      PageRouteBuilder(
+        opaque: true,
+        pageBuilder: (_, __, ___) => const TelegramGateScreen(),
+        transitionsBuilder: (_, animation, __, child) => FadeTransition(
+          opacity: animation,
+          child: child,
+        ),
+      ),
+    );
+    return result == true;
+  }
+
+  /// بعد از یک دانلود موفق: شمارنده را بالا می‌برد و اگر تازه به آستانه
+  /// رسیده، بلافاصله صفحه‌ی قفل را نشان می‌دهد.
+  static Future<void> registerSuccessAndMaybeGate(BuildContext context) async {
+    final wasLocked = isLocked;
+    await registerSuccess();
+    if (!wasLocked && isLocked && context.mounted) {
+      await Navigator.of(context).push(
+        PageRouteBuilder(
+          opaque: true,
+          pageBuilder: (_, __, ___) => const TelegramGateScreen(),
+          transitionsBuilder: (_, animation, __, child) => FadeTransition(
+            opacity: animation,
+            child: child,
+          ),
+        ),
+      );
+    }
+  }
+}
+
+class TelegramGateScreen extends StatefulWidget {
+  const TelegramGateScreen({super.key});
+
+  @override
+  State<TelegramGateScreen> createState() => _TelegramGateScreenState();
+}
+
+class _TelegramGateScreenState extends State<TelegramGateScreen> {
+  bool checking = false;
+  bool openedChannel = false;
+  String? error;
+
+  Future<void> _openChannel() async {
+    setState(() => openedChannel = true);
+    final deepLink = Uri.parse(
+      'tg://resolve?domain=${TelegramGateConfig.channelUsername}',
+    );
+    final webLink = Uri.parse(
+      'https://t.me/${TelegramGateConfig.channelUsername}',
+    );
+    try {
+      final opened = await launchUrl(deepLink, mode: LaunchMode.externalApplication);
+      if (!opened) {
+        await launchUrl(webLink, mode: LaunchMode.externalApplication);
+      }
+    } catch (_) {
+      await launchUrl(webLink, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  Future<void> _confirm() async {
+    if (!openedChannel) {
+      setState(() => error = 'لطفاً ابتدا روی «عضویت در کانال» بزنید.');
+      return;
+    }
+    setState(() {
+      checking = true;
+      error = null;
+    });
+    final result = await DownloadGateService.checkMembership();
+    if (!mounted) return;
+    if (result.ok) {
+      await DownloadGateService.markVerified();
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } else {
+      setState(() {
+        checking = false;
+        error = result.message;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: false,
+      child: Scaffold(
+        backgroundColor: _bg,
+        body: SafeArea(
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: 28),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  width: 108,
+                  height: 108,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: LinearGradient(
+                      begin: Alignment.topRight,
+                      end: Alignment.bottomLeft,
+                      colors: [_primary, _cyan],
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: _cyan.withOpacity(.35),
+                        blurRadius: 40,
+                        spreadRadius: 4,
+                      ),
+                    ],
+                  ),
+                  child: Icon(Icons.telegram, color: Colors.white, size: 56),
+                ),
+                SizedBox(height: 28),
+                Text(
+                  'برای ادامه‌ی دانلود، عضو کانال شوید',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 19, fontWeight: FontWeight.w900),
+                ),
+                SizedBox(height: 10),
+                Text(
+                  'با عضویت در ${TelegramGateConfig.channelDisplayName}، به آپدیت‌ها و ویژگی‌های جدید دسترسی پیدا می‌کنید و اجازه‌ی دانلودهای بعدی هم فعال می‌شود.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: _muted, fontSize: 13, height: 1.8),
+                ),
+                SizedBox(height: 32),
+                SizedBox(
+                  width: double.infinity,
+                  height: 54,
+                  child: FilledButton.icon(
+                    onPressed: _openChannel,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: _cyan,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                    icon: Icon(Icons.telegram, size: 22),
+                    label: Text(
+                      'عضویت در کانال',
+                      style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+                    ),
+                  ),
+                ),
+                SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  height: 54,
+                  child: OutlinedButton.icon(
+                    onPressed: checking ? null : _confirm,
+                    style: OutlinedButton.styleFrom(
+                      side: BorderSide(color: _primary, width: 1.4),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                    icon: checking
+                        ? SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: _primary),
+                          )
+                        : Icon(Icons.check_circle_outline_rounded, color: _primary),
+                    label: Text(
+                      'تایید عضویت و ادامه',
+                      style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: _primary),
+                    ),
+                  ),
+                ),
+                if (error != null) ...[
+                  SizedBox(height: 14),
+                  Text(
+                    error!,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: _danger, fontSize: 12),
+                  ),
+                ],
+                SizedBox(height: 18),
+                Text(
+                  TelegramGateConfig.hasRealVerification
+                      ? 'عضویت شما به‌صورت خودکار از تلگرام استعلام می‌شود.'
+                      : 'در این نسخه، تایید بر پایه‌ی اعتماد به شماست؛ برای استعلام خودکار واقعی، توکن ربات را در تنظیمات پروژه فعال کنید.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: _muted, fontSize: 10.5),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -758,7 +1436,7 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
           enableDrag: true,
         );
       }
-      await Future<void>.delayed(const Duration(milliseconds: 350));
+      await Future<void>.delayed(Duration(milliseconds: 350));
       await _refreshOverlay();
     } catch (e) {
       _message('فعال‌سازی پنجره شناور ناموفق بود: $e');
@@ -779,12 +1457,14 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
       _message('اول لینک فایل را وارد کنید.');
       return;
     }
+    if (!await DownloadGateService.ensureUnlocked(context)) return;
     setState(() => downloading = true);
     try {
       final item = await DownloadService.download(url: url);
       if (mounted) {
         _message('✓ ${item.name} در Downloads ذخیره شد.');
         urlController.clear();
+        await DownloadGateService.registerSuccessAndMaybeGate(context);
       }
     } catch (e) {
       if (mounted) _message(_friendlyError(e));
@@ -811,7 +1491,7 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
       child: CustomScrollView(
         slivers: [
           SliverPadding(
-            padding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
+            padding: EdgeInsets.fromLTRB(20, 18, 20, 8),
             sliver: SliverToBoxAdapter(
               child: _Header(
                 title: 'Floating Downloader',
@@ -831,7 +1511,7 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
           ),
           if (clipboardSuggestion != null)
             SliverPadding(
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+              padding: EdgeInsets.fromLTRB(20, 8, 20, 0),
               sliver: SliverToBoxAdapter(
                 child: _ClipboardBanner(
                   link: clipboardSuggestion!,
@@ -841,7 +1521,7 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
               ),
             ),
           SliverPadding(
-            padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+            padding: EdgeInsets.fromLTRB(20, 8, 20, 20),
             sliver: SliverToBoxAdapter(
               child: _HeroCard(
                 controller: urlController,
@@ -852,7 +1532,7 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
             ),
           ),
           SliverPadding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
+            padding: EdgeInsets.symmetric(horizontal: 20),
             sliver: SliverToBoxAdapter(
               child: AnimatedBuilder(
                 animation: DownloadStore.instance,
@@ -864,7 +1544,7 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
             ),
           ),
           SliverPadding(
-            padding: const EdgeInsets.fromLTRB(20, 24, 20, 10),
+            padding: EdgeInsets.fromLTRB(20, 24, 20, 10),
             sliver: SliverToBoxAdapter(
               child: Text(
                 'ابزارهای سریع',
@@ -875,7 +1555,7 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
             ),
           ),
           SliverPadding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 28),
+            padding: EdgeInsets.fromLTRB(20, 0, 20, 28),
             sliver: SliverGrid.count(
               crossAxisCount: 2,
               mainAxisSpacing: 12,
@@ -907,7 +1587,7 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
                   icon: Icons.telegram,
                   title: 'کانال رسمی',
                   subtitle: '@gard_config',
-                  accent: const Color(0xFF2AABEE),
+                  accent: Color(0xFF2AABEE),
                   onTap: () async {
                     await launchUrl(
                       Uri.parse('https://t.me/gard_config'),
@@ -925,13 +1605,13 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
 
   void _openBrowser(BuildContext context) {
     Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const BrowserTab(fullscreen: true)),
+      MaterialPageRoute(builder: (_) => BrowserTab(fullscreen: true)),
     );
   }
 
   void _openDownloads(BuildContext context) {
     Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const HistoryTab(fullscreen: true)),
+      MaterialPageRoute(builder: (_) => HistoryTab(fullscreen: true)),
     );
   }
 }
@@ -941,7 +1621,7 @@ class _Header extends StatelessWidget {
   final String subtitle;
   final Widget trailing;
 
-  const _Header({
+  _Header({
     required this.title,
     required this.subtitle,
     required this.trailing,
@@ -956,30 +1636,30 @@ class _Header extends StatelessWidget {
           height: 48,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(15),
-            gradient: const LinearGradient(
+            gradient: LinearGradient(
               colors: [_primary, _cyan],
               begin: Alignment.topRight,
               end: Alignment.bottomLeft,
             ),
           ),
-          child: const Icon(Icons.download_rounded, color: Colors.white),
+          child: Icon(Icons.download_rounded, color: Colors.white),
         ),
-        const SizedBox(width: 13),
+        SizedBox(width: 13),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
                 title,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w900,
                 ),
               ),
-              const SizedBox(height: 2),
+              SizedBox(height: 2),
               Text(
                 subtitle,
-                style: const TextStyle(color: _muted, fontSize: 12),
+                style: TextStyle(color: _muted, fontSize: 12),
               ),
             ],
           ),
@@ -995,7 +1675,7 @@ class _ClipboardBanner extends StatelessWidget {
   final VoidCallback onUse;
   final VoidCallback onDismiss;
 
-  const _ClipboardBanner({
+  _ClipboardBanner({
     required this.link,
     required this.onUse,
     required this.onDismiss,
@@ -1004,8 +1684,8 @@ class _ClipboardBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+      margin: EdgeInsets.only(bottom: 4),
+      padding: EdgeInsets.symmetric(horizontal: 14, vertical: 11),
       decoration: BoxDecoration(
         color: _cyan.withOpacity(.10),
         borderRadius: BorderRadius.circular(16),
@@ -1013,13 +1693,13 @@ class _ClipboardBanner extends StatelessWidget {
       ),
       child: Row(
         children: [
-          const Icon(Icons.link_rounded, color: _cyan, size: 18),
-          const SizedBox(width: 8),
+          Icon(Icons.link_rounded, color: _cyan, size: 18),
+          SizedBox(width: 8),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
+                Text(
                   'لینکی در کلیپ‌بورد پیدا شد',
                   style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12),
                 ),
@@ -1028,20 +1708,20 @@ class _ClipboardBanner extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   textDirection: TextDirection.ltr,
-                  style: const TextStyle(color: _muted, fontSize: 10),
+                  style: TextStyle(color: _muted, fontSize: 10),
                 ),
               ],
             ),
           ),
           TextButton(
             onPressed: onUse,
-            child: const Text('استفاده'),
+            child: Text('استفاده'),
           ),
           IconButton(
             padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
+            constraints: BoxConstraints(),
             onPressed: onDismiss,
-            icon: const Icon(Icons.close_rounded, size: 17, color: _muted),
+            icon: Icon(Icons.close_rounded, size: 17, color: _muted),
           ),
         ],
       ),
@@ -1055,7 +1735,7 @@ class _HeroCard extends StatelessWidget {
   final VoidCallback onPaste;
   final VoidCallback onDownload;
 
-  const _HeroCard({
+  _HeroCard({
     required this.controller,
     required this.loading,
     required this.onPaste,
@@ -1065,7 +1745,7 @@ class _HeroCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding: EdgeInsets.all(18),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(26),
         gradient: LinearGradient(
@@ -1089,7 +1769,7 @@ class _HeroCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
+          Row(
             children: [
               Icon(Icons.bolt_rounded, color: _cyan),
               SizedBox(width: 8),
@@ -1099,12 +1779,12 @@ class _HeroCard extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          const Text(
+          SizedBox(height: 8),
+          Text(
             'لینک مستقیم فایل را وارد کنید. فایل پس از دانلود واقعی داخل Downloads ذخیره می‌شود.',
             style: TextStyle(color: _muted, height: 1.5, fontSize: 12),
           ),
-          const SizedBox(height: 16),
+          SizedBox(height: 16),
           TextField(
             controller: controller,
             keyboardType: TextInputType.url,
@@ -1117,25 +1797,25 @@ class _HeroCard extends StatelessWidget {
               suffixIcon: IconButton(
                 onPressed: onPaste,
                 tooltip: 'چسباندن',
-                icon: const Icon(Icons.content_paste_rounded),
+                icon: Icon(Icons.content_paste_rounded),
               ),
             ),
           ),
-          const SizedBox(height: 12),
+          SizedBox(height: 12),
           SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
               onPressed: loading ? null : onDownload,
               icon: loading
-                  ? const SizedBox(
+                  ? SizedBox(
                       width: 18,
                       height: 18,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Icon(Icons.download_rounded),
+                  : Icon(Icons.download_rounded),
               label: Text(loading ? 'در حال دانلود…' : 'شروع دانلود'),
               style: FilledButton.styleFrom(
-                minimumSize: const Size.fromHeight(52),
+                minimumSize: Size.fromHeight(52),
                 backgroundColor: _primary,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16),
@@ -1153,7 +1833,7 @@ class _StatsRow extends StatelessWidget {
   final int active;
   final int completed;
 
-  const _StatsRow({required this.active, required this.completed});
+  _StatsRow({required this.active, required this.completed});
 
   @override
   Widget build(BuildContext context) {
@@ -1167,7 +1847,7 @@ class _StatsRow extends StatelessWidget {
             accent: _cyan,
           ),
         ),
-        const SizedBox(width: 12),
+        SizedBox(width: 12),
         Expanded(
           child: _StatCard(
             icon: Icons.check_circle_rounded,
@@ -1187,7 +1867,7 @@ class _StatCard extends StatelessWidget {
   final String value;
   final Color accent;
 
-  const _StatCard({
+  _StatCard({
     required this.icon,
     required this.label,
     required this.value,
@@ -1197,7 +1877,7 @@ class _StatCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(15),
+      padding: EdgeInsets.all(15),
       decoration: BoxDecoration(
         color: _surface,
         borderRadius: BorderRadius.circular(20),
@@ -1214,19 +1894,19 @@ class _StatCard extends StatelessWidget {
             ),
             child: Icon(icon, color: accent, size: 21),
           ),
-          const SizedBox(width: 10),
+          SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   label,
-                  style: const TextStyle(color: _muted, fontSize: 11),
+                  style: TextStyle(color: _muted, fontSize: 11),
                 ),
-                const SizedBox(height: 2),
+                SizedBox(height: 2),
                 Text(
                   value,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 19,
                     fontWeight: FontWeight.w900,
                   ),
@@ -1247,7 +1927,7 @@ class _QuickCard extends StatelessWidget {
   final Color accent;
   final VoidCallback onTap;
 
-  const _QuickCard({
+  _QuickCard({
     required this.icon,
     required this.title,
     required this.subtitle,
@@ -1264,7 +1944,7 @@ class _QuickCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(21),
         onTap: onTap,
         child: Container(
-          padding: const EdgeInsets.all(15),
+          padding: EdgeInsets.all(15),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(21),
             border: Border.all(color: Colors.white.withOpacity(.05)),
@@ -1273,17 +1953,17 @@ class _QuickCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Icon(icon, color: accent, size: 25),
-              const Spacer(),
+              Spacer(),
               Text(
                 title,
-                style: const TextStyle(fontWeight: FontWeight.w900),
+                style: TextStyle(fontWeight: FontWeight.w900),
               ),
-              const SizedBox(height: 4),
+              SizedBox(height: 4),
               Text(
                 subtitle,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: _muted, fontSize: 10, height: 1.35),
+                style: TextStyle(color: _muted, fontSize: 10, height: 1.35),
               ),
             ],
           ),
@@ -1296,20 +1976,20 @@ class _QuickCard extends StatelessWidget {
 class BrowserTab extends StatefulWidget {
   final bool fullscreen;
 
-  const BrowserTab({super.key, this.fullscreen = false});
+  BrowserTab({super.key, this.fullscreen = false});
 
   @override
   State<BrowserTab> createState() => _BrowserTabState();
 }
 
-const _browserUserAgent =
+_browserUserAgent =
     'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/131 Mobile Safari/537.36';
 
 class _DetectedMedia {
   final String url;
   final String referer;
 
-  const _DetectedMedia({required this.url, required this.referer});
+  _DetectedMedia({required this.url, required this.referer});
 }
 
 class _BrowserTabState extends State<BrowserTab> {
@@ -1354,6 +2034,7 @@ class _BrowserTabState extends State<BrowserTab> {
 
   Future<void> _downloadDetected(_DetectedMedia media) async {
     Navigator.of(context).maybePop();
+    if (!await DownloadGateService.ensureUnlocked(context)) return;
     try {
       // بدون Referer/Cookieِ درست، بسیاری از سرورها به‌جای فایل، صفحه
       // خطا/لاگین برمی‌گردانند که باعث «دانلود فیک» می‌شد. اینجا همان
@@ -1375,8 +2056,9 @@ class _BrowserTabState extends State<BrowserTab> {
       );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('✓ دانلود کامل شد و در Downloads ذخیره شد.')),
+          SnackBar(content: Text('✓ دانلود کامل شد و در Downloads ذخیره شد.')),
         );
+        await DownloadGateService.registerSuccessAndMaybeGate(context);
       }
     } catch (e) {
       if (mounted) {
@@ -1392,7 +2074,7 @@ class _BrowserTabState extends State<BrowserTab> {
       context: context,
       isScrollControlled: true,
       backgroundColor: _surface,
-      shape: const RoundedRectangleBorder(
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
       builder: (sheetContext) => SafeArea(
@@ -1401,7 +2083,7 @@ class _BrowserTabState extends State<BrowserTab> {
             maxHeight: MediaQuery.of(sheetContext).size.height * .72,
           ),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 12, 18, 20),
+            padding: EdgeInsets.fromLTRB(18, 12, 18, 20),
             child: Column(
               children: [
                 Container(
@@ -1412,12 +2094,12 @@ class _BrowserTabState extends State<BrowserTab> {
                     borderRadius: BorderRadius.circular(10),
                   ),
                 ),
-                const SizedBox(height: 18),
+                SizedBox(height: 18),
                 Row(
                   children: [
-                    const Icon(Icons.radar_rounded, color: _cyan),
-                    const SizedBox(width: 9),
-                    const Expanded(
+                    Icon(Icons.radar_rounded, color: _cyan),
+                    SizedBox(width: 9),
+                    Expanded(
                       child: Text(
                         'رسانه‌های پیدا شده',
                         style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
@@ -1425,22 +2107,22 @@ class _BrowserTabState extends State<BrowserTab> {
                     ),
                     Text(
                       '${detected.length}',
-                      style: const TextStyle(color: _muted),
+                      style: TextStyle(color: _muted),
                     ),
                   ],
                 ),
-                const SizedBox(height: 14),
+                SizedBox(height: 14),
                 Expanded(
                   child: ListView.separated(
                     itemCount: detected.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    separatorBuilder: (_, __) => SizedBox(height: 8),
                     itemBuilder: (_, index) {
                       final media = detected[index];
                       final mime = DownloadService.mimeFromExtension(
                         DownloadService.extensionFromUrl(media.url),
                       );
                       return Container(
-                        padding: const EdgeInsets.all(12),
+                        padding: EdgeInsets.all(12),
                         decoration: BoxDecoration(
                           color: _surface2,
                           borderRadius: BorderRadius.circular(17),
@@ -1448,7 +2130,7 @@ class _BrowserTabState extends State<BrowserTab> {
                         child: Row(
                           children: [
                             CircleAvatar(
-                              backgroundColor: const Color(0x1A38D9FF),
+                              backgroundColor: Color(0x1A38D9FF),
                               child: Icon(
                                 mime.startsWith('audio/')
                                     ? Icons.music_note_rounded
@@ -1456,20 +2138,20 @@ class _BrowserTabState extends State<BrowserTab> {
                                 color: _cyan,
                               ),
                             ),
-                            const SizedBox(width: 10),
+                            SizedBox(width: 10),
                             Expanded(
                               child: Text(
                                 media.url,
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
                                 textDirection: TextDirection.ltr,
-                                style: const TextStyle(fontSize: 11),
+                                style: TextStyle(fontSize: 11),
                               ),
                             ),
-                            const SizedBox(width: 8),
+                            SizedBox(width: 8),
                             IconButton(
                               onPressed: () => _downloadDetected(media),
-                              icon: const Icon(Icons.download_rounded),
+                              icon: Icon(Icons.download_rounded),
                               color: _success,
                             ),
                           ],
@@ -1491,21 +2173,21 @@ class _BrowserTabState extends State<BrowserTab> {
     final body = Column(
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+          padding: EdgeInsets.fromLTRB(12, 8, 12, 8),
           child: Row(
             children: [
               if (widget.fullscreen)
                 IconButton(
                   onPressed: () => Navigator.of(context).maybePop(),
-                  icon: const Icon(Icons.arrow_back_rounded),
+                  icon: Icon(Icons.arrow_back_rounded),
                 ),
               IconButton(
                 onPressed: () => webView?.goBack(),
-                icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
+                icon: Icon(Icons.arrow_back_ios_new_rounded, size: 18),
               ),
               IconButton(
                 onPressed: () => webView?.goForward(),
-                icon: const Icon(Icons.arrow_forward_ios_rounded, size: 18),
+                icon: Icon(Icons.arrow_forward_ios_rounded, size: 18),
               ),
               Expanded(
                 child: TextField(
@@ -1516,18 +2198,18 @@ class _BrowserTabState extends State<BrowserTab> {
                   onSubmitted: _navigate,
                   decoration: InputDecoration(
                     hintText: 'آدرس یا جستجو…',
-                    prefixIcon: const Icon(Icons.language_rounded, size: 20),
+                    prefixIcon: Icon(Icons.language_rounded, size: 20),
                     suffixIcon: IconButton(
                       onPressed: () => _navigate(addressController.text),
-                      icon: const Icon(Icons.arrow_upward_rounded),
+                      icon: Icon(Icons.arrow_upward_rounded),
                     ),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 14),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 14),
                   ),
                 ),
               ),
               IconButton(
                 onPressed: () => webView?.reload(),
-                icon: const Icon(Icons.refresh_rounded),
+                icon: Icon(Icons.refresh_rounded),
               ),
             ],
           ),
@@ -1589,7 +2271,7 @@ class _BrowserTabState extends State<BrowserTab> {
                 },
               ),
               if (loading)
-                const Center(
+                Center(
                   child: CircularProgressIndicator(strokeWidth: 2),
                 ),
             ],
@@ -1602,7 +2284,7 @@ class _BrowserTabState extends State<BrowserTab> {
       appBar: widget.fullscreen
           ? null
           : AppBar(
-              title: const Text(
+              title: Text(
                 'مرورگر هوشمند',
                 style: TextStyle(fontWeight: FontWeight.w900),
               ),
@@ -1614,9 +2296,389 @@ class _BrowserTabState extends State<BrowserTab> {
           : FloatingActionButton.extended(
               onPressed: _showDetected,
               backgroundColor: _primary,
-              icon: const Icon(Icons.download_rounded),
+              icon: Icon(Icons.download_rounded),
               label: Text('${detected.length} رسانه'),
             ),
+    );
+  }
+}
+
+class _PlatformDef {
+  final String id;
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final Color color;
+  final String hint;
+  final bool downloadable;
+  final Future<MediaInfo> Function(String url) fetch;
+
+  const _PlatformDef({
+    required this.id,
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.color,
+    required this.hint,
+    required this.downloadable,
+    required this.fetch,
+  });
+}
+
+final List<_PlatformDef> _platformDefs = [
+  _PlatformDef(
+    id: 'instagram',
+    title: 'اینستاگرام',
+    subtitle: 'دانلود پست/ریلز عمومی',
+    icon: Icons.camera_alt_rounded,
+    color: Color(0xFFE1306C),
+    hint: 'لینک پست یا ریلز اینستاگرام را بچسبانید',
+    downloadable: true,
+    fetch: PlatformExtractor.instagram,
+  ),
+  _PlatformDef(
+    id: 'tiktok',
+    title: 'تیک‌تاک',
+    subtitle: 'دانلود ویدیوی عمومی',
+    icon: Icons.music_video_rounded,
+    color: Color(0xFF25F4EE),
+    hint: 'لینک ویدیوی تیک‌تاک را بچسبانید',
+    downloadable: true,
+    fetch: PlatformExtractor.tiktok,
+  ),
+  _PlatformDef(
+    id: 'soundcloud',
+    title: 'ساندکلاود',
+    subtitle: 'دانلود آهنگ عمومی',
+    icon: Icons.cloud_rounded,
+    color: Color(0xFFFF7700),
+    hint: 'لینک آهنگ SoundCloud را بچسبانید',
+    downloadable: true,
+    fetch: PlatformExtractor.soundcloud,
+  ),
+  _PlatformDef(
+    id: 'youtube',
+    title: 'یوتیوب',
+    subtitle: 'فقط اطلاعات + باز کردن در اپ',
+    icon: Icons.smart_display_rounded,
+    color: Color(0xFFFF0000),
+    hint: 'لینک ویدیوی یوتیوب را بچسبانید',
+    downloadable: false,
+    fetch: PlatformExtractor.youtubeMeta,
+  ),
+  _PlatformDef(
+    id: 'spotify',
+    title: 'اسپاتیفای',
+    subtitle: 'فقط اطلاعات + باز کردن در اپ',
+    icon: Icons.headphones_rounded,
+    color: Color(0xFF1DB954),
+    hint: 'لینک آهنگ/پلی‌لیست اسپاتیفای را بچسبانید',
+    downloadable: false,
+    fetch: PlatformExtractor.spotifyMeta,
+  ),
+];
+
+class PlatformsTab extends StatelessWidget {
+  const PlatformsTab({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('پلتفرم‌ها', style: TextStyle(fontWeight: FontWeight.w900)),
+        backgroundColor: Colors.transparent,
+      ),
+      body: ListView(
+        padding: EdgeInsets.fromLTRB(16, 6, 16, 24),
+        children: [
+          Text(
+            'هر پلتفرم کاملاً جدا کار می‌کند: لینک را بچسبانید تا عنوان، کاور و گزینه‌های دانلود مخصوص همان پلتفرم نشان داده شود.',
+            style: TextStyle(color: _muted, fontSize: 12, height: 1.7),
+          ),
+          SizedBox(height: 16),
+          ..._platformDefs.map(
+            (p) => Card(
+              color: _surface,
+              elevation: 0,
+              margin: EdgeInsets.only(bottom: 10),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+              child: ListTile(
+                contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => PlatformDetailScreen(def: p)),
+                ),
+                leading: Container(
+                  width: 46,
+                  height: 46,
+                  decoration: BoxDecoration(
+                    color: p.color.withOpacity(.14),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Icon(p.icon, color: p.color),
+                ),
+                title: Text(p.title, style: TextStyle(fontWeight: FontWeight.w800)),
+                subtitle: Text(p.subtitle, style: TextStyle(color: _muted, fontSize: 11)),
+                trailing: Icon(Icons.chevron_left_rounded, color: _muted),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class PlatformDetailScreen extends StatefulWidget {
+  final _PlatformDef def;
+  const PlatformDetailScreen({super.key, required this.def});
+
+  @override
+  State<PlatformDetailScreen> createState() => _PlatformDetailScreenState();
+}
+
+class _PlatformDetailScreenState extends State<PlatformDetailScreen> {
+  final linkController = TextEditingController();
+  bool loading = false;
+  String? error;
+  MediaInfo? info;
+  final Set<String> downloadingFormats = {};
+
+  @override
+  void dispose() {
+    linkController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _fetch() async {
+    final link = linkController.text.trim();
+    if (link.isEmpty) return;
+    final uri = Uri.tryParse(link);
+    if (uri == null || !uri.hasScheme || !uri.hasAuthority) {
+      setState(() => error = 'لینک معتبر نیست.');
+      return;
+    }
+    setState(() {
+      loading = true;
+      error = null;
+      info = null;
+    });
+    try {
+      final result = await widget.def.fetch(link);
+      if (!mounted) return;
+      setState(() => info = result);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => error = e.toString().replaceFirst('Exception: ', ''));
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  Future<void> _downloadFormat(MediaFormat format) async {
+    if (!await DownloadGateService.ensureUnlocked(context)) return;
+    setState(() => downloadingFormats.add(format.url));
+    try {
+      await DownloadService.download(
+        url: format.url,
+        preferredName: info?.title,
+        headers: {'Referer': info?.referer ?? widget.def.hint},
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('✓ دانلود کامل شد و در Downloads ذخیره شد.')),
+        );
+        await DownloadGateService.registerSuccessAndMaybeGate(context);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => downloadingFormats.remove(format.url));
+    }
+  }
+
+  Future<void> _openOriginal() async {
+    final uri = Uri.tryParse(linkController.text.trim());
+    if (uri == null) return;
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final def = widget.def;
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(def.title, style: TextStyle(fontWeight: FontWeight.w900)),
+        backgroundColor: Colors.transparent,
+      ),
+      body: ListView(
+        padding: EdgeInsets.fromLTRB(16, 6, 16, 28),
+        children: [
+          Container(
+            padding: EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: _surface,
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: linkController,
+                  textDirection: TextDirection.ltr,
+                  decoration: InputDecoration(hintText: def.hint),
+                ),
+                SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: loading ? null : _fetch,
+                    style: FilledButton.styleFrom(backgroundColor: def.color),
+                    icon: loading
+                        ? SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                          )
+                        : Icon(Icons.search_rounded),
+                    label: Text(loading ? 'در حال بررسی…' : 'بررسی لینک'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (error != null) ...[
+            SizedBox(height: 14),
+            Container(
+              padding: EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: _danger.withOpacity(.10),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: _danger.withOpacity(.3)),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.error_outline_rounded, color: _danger, size: 18),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(error!, style: TextStyle(color: _danger, fontSize: 12)),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          if (info != null) ...[
+            SizedBox(height: 16),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(14),
+                  child: info!.thumbnailUrl != null
+                      ? Image.network(
+                          info!.thumbnailUrl!,
+                          width: 92,
+                          height: 92,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
+                            width: 92,
+                            height: 92,
+                            color: _surface2,
+                            child: Icon(def.icon, color: def.color),
+                          ),
+                        )
+                      : Container(
+                          width: 92,
+                          height: 92,
+                          color: _surface2,
+                          child: Icon(def.icon, color: def.color),
+                        ),
+                ),
+                SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        info!.title,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+                      ),
+                      if (info!.author != null) ...[
+                        SizedBox(height: 6),
+                        Text(info!.author!, style: TextStyle(color: _muted, fontSize: 12)),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: 18),
+            if (!def.downloadable) ...[
+              Container(
+                padding: EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: def.color.withOpacity(.08),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Text(
+                  '${def.title} اجازه‌ی دانلود مستقیم فایل توسط اپ‌های شخص‌ثالث را نمی‌دهد. می‌توانید همین‌جا آن را در اپ اصلی باز کنید.',
+                  style: TextStyle(color: _muted, fontSize: 11.5, height: 1.7),
+                ),
+              ),
+              SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: _openOriginal,
+                  icon: Icon(Icons.open_in_new_rounded),
+                  label: Text('باز کردن در اپ ${def.title}'),
+                ),
+              ),
+            ] else
+              ...info!.formats.map((format) {
+                final isDownloading = downloadingFormats.contains(format.url);
+                return Container(
+                  margin: EdgeInsets.only(bottom: 8),
+                  padding: EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: _surface,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        format.mimeType.startsWith('audio/')
+                            ? Icons.music_note_rounded
+                            : format.mimeType.startsWith('image/')
+                                ? Icons.image_rounded
+                                : Icons.movie_rounded,
+                        color: def.color,
+                      ),
+                      SizedBox(width: 10),
+                      Expanded(child: Text(format.label, style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12.5))),
+                      FilledButton(
+                        onPressed: isDownloading ? null : () => _downloadFormat(format),
+                        style: FilledButton.styleFrom(backgroundColor: def.color),
+                        child: isDownloading
+                            ? SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                              )
+                            : Icon(Icons.download_rounded, size: 18),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+          ],
+        ],
+      ),
     );
   }
 }
@@ -1624,7 +2686,7 @@ class _BrowserTabState extends State<BrowserTab> {
 class HistoryTab extends StatefulWidget {
   final bool fullscreen;
 
-  const HistoryTab({super.key, this.fullscreen = false});
+  HistoryTab({super.key, this.fullscreen = false});
 
   @override
   State<HistoryTab> createState() => _HistoryTabState();
@@ -1647,10 +2709,10 @@ class _HistoryTabState extends State<HistoryTab> {
         leading: widget.fullscreen
             ? IconButton(
                 onPressed: () => Navigator.of(context).maybePop(),
-                icon: const Icon(Icons.arrow_back_rounded),
+                icon: Icon(Icons.arrow_back_rounded),
               )
             : null,
-        title: const Text(
+        title: Text(
           'دانلودهای من',
           style: TextStyle(fontWeight: FontWeight.w900),
         ),
@@ -1659,11 +2721,11 @@ class _HistoryTabState extends State<HistoryTab> {
           AnimatedBuilder(
             animation: DownloadStore.instance,
             builder: (_, __) => DownloadStore.instance.completed.isEmpty
-                ? const SizedBox.shrink()
+                ? SizedBox.shrink()
                 : IconButton(
                     tooltip: 'پاک کردن تاریخچه',
                     onPressed: () => _confirmClear(context),
-                    icon: const Icon(Icons.delete_sweep_rounded),
+                    icon: Icon(Icons.delete_sweep_rounded),
                   ),
           ),
         ],
@@ -1673,7 +2735,7 @@ class _HistoryTabState extends State<HistoryTab> {
         builder: (context, _) {
           final store = DownloadStore.instance;
           if (store.completed.isEmpty && store.active.isEmpty) {
-            return const _EmptyState(
+            return _EmptyState(
               icon: Icons.download_for_offline_rounded,
               title: 'هنوز دانلودی ندارید',
               subtitle: 'از صفحه خانه لینک مستقیم بدهید یا از مرورگر یک رسانه پیدا کنید.',
@@ -1688,36 +2750,36 @@ class _HistoryTabState extends State<HistoryTab> {
                   .toList();
 
           return ListView(
-            padding: const EdgeInsets.fromLTRB(16, 6, 16, 24),
+            padding: EdgeInsets.fromLTRB(16, 6, 16, 24),
             children: [
               if (store.completed.isNotEmpty)
                 Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
+                  padding: EdgeInsets.only(bottom: 12),
                   child: TextField(
                     controller: searchController,
                     onChanged: (value) => setState(() => query = value),
                     decoration: InputDecoration(
                       hintText: 'جستجو در نام فایل…',
-                      prefixIcon: const Icon(Icons.search_rounded, size: 20),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 14),
+                      prefixIcon: Icon(Icons.search_rounded, size: 20),
+                      contentPadding: EdgeInsets.symmetric(horizontal: 14),
                     ),
                   ),
                 ),
               if (store.active.isNotEmpty) ...[
-                const _SectionTitle(title: 'در حال دانلود'),
+                _SectionTitle(title: 'در حال دانلود'),
                 ...store.active.entries.map(
                   (entry) => _ActiveDownloadCard(
                     name: store.activeNames[entry.key] ?? 'فایل',
                     progress: entry.value,
                   ),
                 ),
-                const SizedBox(height: 16),
+                SizedBox(height: 16),
               ],
               if (filtered.isNotEmpty) ...[
-                const _SectionTitle(title: 'تکمیل‌شده'),
+                _SectionTitle(title: 'تکمیل‌شده'),
                 ...filtered.map((item) => _HistoryCard(item: item)),
               ] else if (query.trim().isNotEmpty)
-                const Padding(
+                Padding(
                   padding: EdgeInsets.only(top: 24),
                   child: Text(
                     'نتیجه‌ای پیدا نشد.',
@@ -1736,16 +2798,16 @@ class _HistoryTabState extends State<HistoryTab> {
     final yes = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('پاک کردن تاریخچه؟'),
-        content: const Text('فقط تاریخچه داخل برنامه حذف می‌شود؛ فایل‌های Downloads پاک نمی‌شوند.'),
+        title: Text('پاک کردن تاریخچه؟'),
+        content: Text('فقط تاریخچه داخل برنامه حذف می‌شود؛ فایل‌های Downloads پاک نمی‌شوند.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('انصراف'),
+            child: Text('انصراف'),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('پاک کردن'),
+            child: Text('پاک کردن'),
           ),
         ],
       ),
@@ -1758,7 +2820,7 @@ class _ActiveDownloadCard extends StatelessWidget {
   final String name;
   final double progress;
 
-  const _ActiveDownloadCard({
+  _ActiveDownloadCard({
     required this.name,
     required this.progress,
   });
@@ -1768,14 +2830,14 @@ class _ActiveDownloadCard extends StatelessWidget {
     return _CardShell(
       child: Row(
         children: [
-          const _FileIcon(icon: Icons.downloading_rounded, color: _cyan),
-          const SizedBox(width: 12),
+          _FileIcon(icon: Icons.downloading_rounded, color: _cyan),
+          SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
-                const SizedBox(height: 8),
+                SizedBox(height: 8),
                 ClipRRect(
                   borderRadius: BorderRadius.circular(6),
                   child: LinearProgressIndicator(
@@ -1788,10 +2850,10 @@ class _ActiveDownloadCard extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(width: 10),
+          SizedBox(width: 10),
           Text(
             '${(progress * 100).round()}%',
-            style: const TextStyle(
+            style: TextStyle(
               color: _cyan,
               fontWeight: FontWeight.w900,
               fontSize: 11,
@@ -1806,7 +2868,7 @@ class _ActiveDownloadCard extends StatelessWidget {
 class _HistoryCard extends StatelessWidget {
   final DownloadItem item;
 
-  const _HistoryCard({required this.item});
+  _HistoryCard({required this.item});
 
   Future<void> _handleAction(BuildContext context, String action) async {
     switch (action) {
@@ -1828,17 +2890,17 @@ class _HistoryCard extends StatelessWidget {
         final yes = await showDialog<bool>(
           context: context,
           builder: (_) => AlertDialog(
-            title: const Text('حذف فایل؟'),
+            title: Text('حذف فایل؟'),
             content: Text('«${item.name}» هم از حافظه گوشی و هم از تاریخچه حذف می‌شود.'),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context, false),
-                child: const Text('انصراف'),
+                child: Text('انصراف'),
               ),
               FilledButton(
                 onPressed: () => Navigator.pop(context, true),
                 style: FilledButton.styleFrom(backgroundColor: _danger),
-                child: const Text('حذف'),
+                child: Text('حذف'),
               ),
             ],
           ),
@@ -1870,7 +2932,7 @@ class _HistoryCard extends StatelessWidget {
                         : Icons.insert_drive_file_rounded,
             color: _success,
           ),
-          const SizedBox(width: 12),
+          SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1879,15 +2941,15 @@ class _HistoryCard extends StatelessWidget {
                   item.name,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w800),
+                  style: TextStyle(fontWeight: FontWeight.w800),
                 ),
-                const SizedBox(height: 5),
+                SizedBox(height: 5),
                 Text(
                   '${_formatBytes(item.bytes)} • $dateText',
-                  style: const TextStyle(color: _muted, fontSize: 10),
+                  style: TextStyle(color: _muted, fontSize: 10),
                 ),
-                const SizedBox(height: 2),
-                const Text(
+                SizedBox(height: 2),
+                Text(
                   'ذخیره شده در Downloads',
                   style: TextStyle(color: _success, fontSize: 10),
                 ),
@@ -1895,13 +2957,13 @@ class _HistoryCard extends StatelessWidget {
             ),
           ),
           PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert_rounded, color: _muted),
+            icon: Icon(Icons.more_vert_rounded, color: _muted),
             color: _surface2,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(14),
             ),
             onSelected: (value) => _handleAction(context, value),
-            itemBuilder: (_) => const [
+            itemBuilder: (_) => [
               PopupMenuItem(
                 value: 'open',
                 child: Row(
@@ -1944,7 +3006,7 @@ class _FileIcon extends StatelessWidget {
   final IconData icon;
   final Color color;
 
-  const _FileIcon({required this.icon, required this.color});
+  _FileIcon({required this.icon, required this.color});
 
   @override
   Widget build(BuildContext context) {
@@ -1963,13 +3025,13 @@ class _FileIcon extends StatelessWidget {
 class _CardShell extends StatelessWidget {
   final Widget child;
 
-  const _CardShell({required this.child});
+  _CardShell({required this.child});
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 9),
-      padding: const EdgeInsets.all(13),
+      margin: EdgeInsets.only(bottom: 9),
+      padding: EdgeInsets.all(13),
       decoration: BoxDecoration(
         color: _surface,
         borderRadius: BorderRadius.circular(18),
@@ -1981,7 +3043,7 @@ class _CardShell extends StatelessWidget {
 }
 
 class SettingsTab extends StatefulWidget {
-  const SettingsTab({super.key});
+  SettingsTab({super.key});
 
   @override
   State<SettingsTab> createState() => _SettingsTabState();
@@ -1992,22 +3054,35 @@ class _SettingsTabState extends State<SettingsTab> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text(
+        title: Text(
           'تنظیمات',
           style: TextStyle(fontWeight: FontWeight.w900),
         ),
         backgroundColor: Colors.transparent,
       ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 28),
+        padding: EdgeInsets.fromLTRB(16, 4, 16, 28),
         children: [
           _SettingsHeader(
             icon: Icons.settings_suggest_rounded,
             title: 'Floating Downloader',
-            subtitle: 'نسخه 3.1 • Android',
+            subtitle: 'نسخه 3.3 • Android',
           ),
-          const SizedBox(height: 16),
-          const _SectionTitle(title: 'دانلود'),
+          SizedBox(height: 16),
+          _SectionTitle(title: 'ظاهر برنامه'),
+          ValueListenableBuilder<bool>(
+            valueListenable: ThemeStore.isDark,
+            builder: (context, isDark, _) => _SettingSwitchTile(
+              icon: isDark ? Icons.dark_mode_rounded : Icons.light_mode_rounded,
+              title: isDark ? 'تم تاریک' : 'تم روشن',
+              subtitle: 'هر وقت خواستید عوضش کنید',
+              color: _primary,
+              value: isDark,
+              onChanged: ThemeStore.setDark,
+            ),
+          ),
+          SizedBox(height: 16),
+          _SectionTitle(title: 'دانلود'),
           ValueListenableBuilder<bool>(
             valueListenable: SettingsStore.wifiOnly,
             builder: (context, value, _) => _SettingSwitchTile(
@@ -2043,13 +3118,13 @@ class _SettingsTabState extends State<SettingsTab> {
             subtitle: 'یک لینک را در هر اپی (مرورگر، تلگرام و…) به Floating Downloader Share کنید.',
             color: _cyan,
           ),
-          const SizedBox(height: 16),
-          const _SectionTitle(title: 'پشتیبانی'),
+          SizedBox(height: 16),
+          _SectionTitle(title: 'پشتیبانی'),
           _SettingTile(
             icon: Icons.telegram,
             title: 'کانال رسمی',
             subtitle: '@gard_config',
-            color: const Color(0xFF2AABEE),
+            color: Color(0xFF2AABEE),
             onTap: () => launchUrl(
               Uri.parse('https://t.me/gard_config'),
               mode: LaunchMode.externalApplication,
@@ -2058,22 +3133,22 @@ class _SettingsTabState extends State<SettingsTab> {
           _SettingTile(
             icon: Icons.info_outline_rounded,
             title: 'درباره برنامه',
-            subtitle: 'نسخه 3.1.0',
+            subtitle: 'نسخه 3.3.0',
             color: _muted,
             onTap: () => showAboutDialog(
               context: context,
               applicationName: 'Floating Downloader',
-              applicationVersion: '3.1.0',
-              applicationIcon: const Icon(Icons.download_rounded, color: _primary),
-              children: const [
+              applicationVersion: '3.3.0',
+              applicationIcon: Icon(Icons.download_rounded, color: _primary),
+              children: [
                 Text(
                   'دانلودر اندرویدی با دانلود واقعیِ اعتبارسنجی‌شده (بدون فایل جعلی)، MediaStore، مرورگر داخلی با ارسال Referer/Cookie، دریافت لینک با Share از سایر اپ‌ها، و پنجره شناور.',
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 18),
-          const Text(
+          SizedBox(height: 18),
+          Text(
             'نکته: لینک‌های DRM و استریم‌های HLS مثل .m3u8 عمداً به‌عنوان MP4 جعلی ذخیره نمی‌شوند. برای آن‌ها باید پردازش استریم جداگانه پیاده‌سازی شود.',
             style: TextStyle(color: _muted, fontSize: 10, height: 1.6),
           ),
@@ -2088,7 +3163,7 @@ class _SettingsHeader extends StatelessWidget {
   final String title;
   final String subtitle;
 
-  const _SettingsHeader({
+  _SettingsHeader({
     required this.icon,
     required this.title,
     required this.subtitle,
@@ -2097,7 +3172,7 @@ class _SettingsHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding: EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: _surface,
         borderRadius: BorderRadius.circular(22),
@@ -2109,18 +3184,18 @@ class _SettingsHeader extends StatelessWidget {
             width: 52,
             height: 52,
             decoration: BoxDecoration(
-              gradient: const LinearGradient(colors: [_primary, _cyan]),
+              gradient: LinearGradient(colors: [_primary, _cyan]),
               borderRadius: BorderRadius.circular(17),
             ),
             child: Icon(icon, color: Colors.white),
           ),
-          const SizedBox(width: 13),
+          SizedBox(width: 13),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(title, style: const TextStyle(fontWeight: FontWeight.w900)),
-              const SizedBox(height: 4),
-              Text(subtitle, style: const TextStyle(color: _muted, fontSize: 11)),
+              Text(title, style: TextStyle(fontWeight: FontWeight.w900)),
+              SizedBox(height: 4),
+              Text(subtitle, style: TextStyle(color: _muted, fontSize: 11)),
             ],
           ),
         ],
@@ -2136,7 +3211,7 @@ class _SettingTile extends StatelessWidget {
   final Color color;
   final VoidCallback? onTap;
 
-  const _SettingTile({
+  _SettingTile({
     required this.icon,
     required this.title,
     required this.subtitle,
@@ -2149,11 +3224,11 @@ class _SettingTile extends StatelessWidget {
     return Card(
       color: _surface,
       elevation: 0,
-      margin: const EdgeInsets.only(bottom: 8),
+      margin: EdgeInsets.only(bottom: 8),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(17)),
       child: ListTile(
         onTap: onTap,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 3),
+        contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 3),
         leading: Container(
           width: 42,
           height: 42,
@@ -2163,14 +3238,14 @@ class _SettingTile extends StatelessWidget {
           ),
           child: Icon(icon, color: color, size: 21),
         ),
-        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+        title: Text(title, style: TextStyle(fontWeight: FontWeight.w700)),
         subtitle: Text(
           subtitle,
-          style: const TextStyle(color: _muted, fontSize: 10),
+          style: TextStyle(color: _muted, fontSize: 10),
         ),
         trailing: onTap == null
             ? null
-            : const Icon(Icons.chevron_left_rounded, color: _muted),
+            : Icon(Icons.chevron_left_rounded, color: _muted),
       ),
     );
   }
@@ -2184,7 +3259,7 @@ class _SettingSwitchTile extends StatelessWidget {
   final bool value;
   final ValueChanged<bool> onChanged;
 
-  const _SettingSwitchTile({
+  _SettingSwitchTile({
     required this.icon,
     required this.title,
     required this.subtitle,
@@ -2198,13 +3273,13 @@ class _SettingSwitchTile extends StatelessWidget {
     return Card(
       color: _surface,
       elevation: 0,
-      margin: const EdgeInsets.only(bottom: 8),
+      margin: EdgeInsets.only(bottom: 8),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(17)),
       child: SwitchListTile(
         value: value,
         onChanged: onChanged,
         activeColor: color,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 3),
+        contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 3),
         secondary: Container(
           width: 42,
           height: 42,
@@ -2214,10 +3289,10 @@ class _SettingSwitchTile extends StatelessWidget {
           ),
           child: Icon(icon, color: color, size: 21),
         ),
-        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+        title: Text(title, style: TextStyle(fontWeight: FontWeight.w700)),
         subtitle: Text(
           subtitle,
-          style: const TextStyle(color: _muted, fontSize: 10),
+          style: TextStyle(color: _muted, fontSize: 10),
         ),
       ),
     );
@@ -2227,15 +3302,15 @@ class _SettingSwitchTile extends StatelessWidget {
 class _SectionTitle extends StatelessWidget {
   final String title;
 
-  const _SectionTitle({required this.title});
+  _SectionTitle({required this.title});
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 6, 4, 9),
+      padding: EdgeInsets.fromLTRB(4, 6, 4, 9),
       child: Text(
         title,
-        style: const TextStyle(
+        style: TextStyle(
           color: _muted,
           fontSize: 12,
           fontWeight: FontWeight.w900,
@@ -2250,7 +3325,7 @@ class _EmptyState extends StatelessWidget {
   final String title;
   final String subtitle;
 
-  const _EmptyState({
+  _EmptyState({
     required this.icon,
     required this.title,
     required this.subtitle,
@@ -2260,7 +3335,7 @@ class _EmptyState extends StatelessWidget {
   Widget build(BuildContext context) {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(38),
+        padding: EdgeInsets.all(38),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -2273,16 +3348,16 @@ class _EmptyState extends StatelessWidget {
               ),
               child: Icon(icon, color: _primary, size: 38),
             ),
-            const SizedBox(height: 18),
+            SizedBox(height: 18),
             Text(
               title,
-              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
             ),
-            const SizedBox(height: 8),
+            SizedBox(height: 8),
             Text(
               subtitle,
               textAlign: TextAlign.center,
-              style: const TextStyle(color: _muted, height: 1.6, fontSize: 11),
+              style: TextStyle(color: _muted, height: 1.6, fontSize: 11),
             ),
           ],
         ),
@@ -2301,7 +3376,7 @@ String _formatBytes(int bytes) {
 }
 
 class FloatingUI extends StatefulWidget {
-  const FloatingUI({super.key});
+  FloatingUI({super.key});
 
   @override
   State<FloatingUI> createState() => _FloatingUIState();
@@ -2330,6 +3405,13 @@ class _FloatingUIState extends State<FloatingUI> {
   Future<void> _download() async {
     final url = controller.text.trim();
     if (url.isEmpty) return;
+    if (DownloadGateService.isLocked) {
+      final deepLink = Uri.parse('tg://resolve?domain=${TelegramGateConfig.channelUsername}');
+      final webLink = Uri.parse('https://t.me/${TelegramGateConfig.channelUsername}');
+      final opened = await launchUrl(deepLink, mode: LaunchMode.externalApplication);
+      if (!opened) await launchUrl(webLink, mode: LaunchMode.externalApplication);
+      return;
+    }
     setState(() {
       downloading = true;
       progress = 0;
@@ -2347,6 +3429,7 @@ class _FloatingUIState extends State<FloatingUI> {
           downloading = false;
           progress = 1;
         });
+        await DownloadGateService.registerSuccess();
       }
     } catch (_) {
       if (mounted) setState(() => downloading = false);
@@ -2365,11 +3448,11 @@ class _FloatingUIState extends State<FloatingUI> {
             setState(() => expanded = !expanded);
           },
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 260),
+            duration: Duration(milliseconds: 260),
             curve: Curves.easeOutCubic,
             width: expanded ? 320 : 60,
             height: expanded ? 184 : 60,
-            padding: const EdgeInsets.all(10),
+            padding: EdgeInsets.all(10),
             decoration: BoxDecoration(
               color: _surface.withOpacity(.97),
               borderRadius: BorderRadius.circular(20),
@@ -2387,9 +3470,9 @@ class _FloatingUIState extends State<FloatingUI> {
                     children: [
                       Row(
                         children: [
-                          const Icon(Icons.bolt_rounded, color: _cyan, size: 19),
-                          const SizedBox(width: 6),
-                          const Expanded(
+                          Icon(Icons.bolt_rounded, color: _cyan, size: 19),
+                          SizedBox(width: 6),
+                          Expanded(
                             child: Text(
                               'دانلود سریع',
                               style: TextStyle(fontWeight: FontWeight.w900),
@@ -2397,18 +3480,18 @@ class _FloatingUIState extends State<FloatingUI> {
                           ),
                           IconButton(
                             padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
+                            constraints: BoxConstraints(),
                             onPressed: () => setState(() => expanded = false),
-                            icon: const Icon(Icons.close_rounded, size: 19),
+                            icon: Icon(Icons.close_rounded, size: 19),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 7),
+                      SizedBox(height: 7),
                       TextField(
                         controller: controller,
                         textDirection: TextDirection.ltr,
                         maxLines: 1,
-                        decoration: const InputDecoration(
+                        decoration: InputDecoration(
                           hintText: 'لینک مستقیم فایل',
                           hintTextDirection: TextDirection.ltr,
                           contentPadding: EdgeInsets.symmetric(
@@ -2417,7 +3500,7 @@ class _FloatingUIState extends State<FloatingUI> {
                           ),
                         ),
                       ),
-                      const SizedBox(height: 8),
+                      SizedBox(height: 8),
                       if (downloading)
                         ClipRRect(
                           borderRadius: BorderRadius.circular(5),
@@ -2428,17 +3511,32 @@ class _FloatingUIState extends State<FloatingUI> {
                           ),
                         )
                       else
-                        SizedBox(
-                          height: 40,
-                          child: FilledButton.icon(
-                            onPressed: _download,
-                            icon: const Icon(Icons.download_rounded, size: 18),
-                            label: const Text('دانلود'),
-                          ),
+                        AnimatedBuilder(
+                          animation: Listenable.merge([
+                            DownloadGateService.successCount,
+                            DownloadGateService.verified,
+                          ]),
+                          builder: (context, _) {
+                            final locked = DownloadGateService.isLocked;
+                            return SizedBox(
+                              height: 40,
+                              child: FilledButton.icon(
+                                onPressed: _download,
+                                style: locked
+                                    ? FilledButton.styleFrom(backgroundColor: _cyan)
+                                    : null,
+                                icon: Icon(
+                                  locked ? Icons.telegram : Icons.download_rounded,
+                                  size: 18,
+                                ),
+                                label: Text(locked ? 'عضویت در کانال' : 'دانلود'),
+                              ),
+                            );
+                          },
                         ),
                     ],
                   )
-                : const Icon(Icons.download_rounded, color: _cyan, size: 28),
+                : Icon(Icons.download_rounded, color: _cyan, size: 28),
           ),
         ),
       ),
