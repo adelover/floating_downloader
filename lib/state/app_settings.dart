@@ -25,6 +25,10 @@ class SettingsStore {
   static final ValueNotifier<bool> wifiOnly = ValueNotifier<bool>(false);
   static final ValueNotifier<int> maxConcurrent = ValueNotifier<int>(2);
   static final ValueNotifier<bool> keepHistory = ValueNotifier<bool>(true);
+  /// URL of the external Flask + yt-dlp service. Empty means not configured.
+  static final ValueNotifier<String> ytDlpBackendUrl =
+      ValueNotifier<String>('');
+  static final ValueNotifier<String> ytDlpProxy = ValueNotifier<String>('');
 
   static Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -32,6 +36,8 @@ class SettingsStore {
     maxConcurrent.value =
         (prefs.getInt('max_concurrent') ?? 2).clamp(1, 4).toInt();
     keepHistory.value = prefs.getBool('keep_history') ?? true;
+    ytDlpBackendUrl.value = prefs.getString('yt_dlp_backend_url') ?? '';
+    ytDlpProxy.value = prefs.getString('yt_dlp_proxy') ?? '';
   }
 
   static Future<void> setWifiOnly(bool value) async {
@@ -44,6 +50,18 @@ class SettingsStore {
     maxConcurrent.value = value.clamp(1, 4).toInt();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('max_concurrent', maxConcurrent.value);
+  }
+
+  static Future<void> setYtDlpBackendUrl(String value) async {
+    ytDlpBackendUrl.value = value.trim().replaceFirst(RegExp(r'/+$'), '');
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('yt_dlp_backend_url', ytDlpBackendUrl.value);
+  }
+
+  static Future<void> setYtDlpProxy(String value) async {
+    ytDlpProxy.value = value.trim();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('yt_dlp_proxy', ytDlpProxy.value);
   }
 
   static Future<void> setKeepHistory(bool value) async {

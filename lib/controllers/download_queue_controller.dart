@@ -116,21 +116,21 @@ class DownloadQueueController extends ChangeNotifier {
           request = candidate;
           break;
         }
-
-        @override
-        void dispose() {
-          SettingsStore.maxConcurrent.removeListener(_onConcurrencyChanged);
-          super.dispose();
-        }
       }
       if (request == null) return;
       final future = _run(request);
       _running[request.task.id] = future;
       future.whenComplete(() {
-        _running.remove(request.task.id);
+        _running.remove(request!.task.id);
         _pump();
       });
     }
+  }
+
+  @override
+  void dispose() {
+    SettingsStore.maxConcurrent.removeListener(_onConcurrencyChanged);
+    super.dispose();
   }
 
   Future<void> _run(_QueuedRequest request) async {

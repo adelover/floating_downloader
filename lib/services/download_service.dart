@@ -19,7 +19,7 @@ class DownloadService {
     ),
   );
 
-  static Future<String> _cacheDirectory() async {
+  static Future<String> cacheDirectory() async {
     final path = await storageChannel.invokeMethod<String>('getCacheDirectory');
     if (path == null || path.isEmpty) {
       throw Exception('مسیر موقت برنامه پیدا نشد.');
@@ -197,6 +197,64 @@ class DownloadService {
     } catch (_) {}
   }
 
+  static void startExternal(String id, String name) {
+    DownloadStore.instance.start(id, sanitizeFileName(name));
+  }
+
+  static void progressExternal(String id, double value) {
+    DownloadStore.instance.progress(id, value);
+  }
+
+  static void finishExternal(String id) {
+    DownloadStore.instance.finish(id);
+  }
+
+  static void failExternal(String id) {
+    DownloadStore.instance.fail(id);
+  }
+
+  /// Imports a file already produced by another downloader (for example the
+  /// yt-dlp backend), saves it through Android MediaStore, and records it in
+  /// the same history as native downloads.
+  static Future<DownloadItem> importExternalFile({
+    required String id,
+    required String url,
+    required String sourcePath,
+    required String fileName,
+    required String mimeType,
+  }) async {
+    final file = File(sourcePath);
+    if (!await file.exists()) {
+      throw Exception('فایل موقت پیدا نشد.');
+    }
+    final bytes = await file.length();
+    if (bytes <= 0) {
+      throw Exception('فایل موقت خالی است.');
+    }
+
+    final safeName = sanitizeFileName(fileName);
+    final savedUri = await _saveToDownloads(
+      sourcePath: sourcePath,
+      fileName: safeName,
+      mimeType: mimeType,
+    );
+
+    await file.delete().catchError((_) {});
+    final item = DownloadItem(
+      id: id,
+      name: safeName,
+      url: url,
+      savedUri: savedUri,
+      date: DateTime.now().toIso8601String(),
+      bytes: bytes,
+      mimeType: mimeType,
+    );
+    if (SettingsStore.keepHistory.value) {
+      await DownloadStore.instance.add(item);
+    }
+    return item;
+  }
+
   static Future<DownloadItem> download({
     required String url,
     String? preferredName,
@@ -255,7 +313,7 @@ class DownloadService {
         ? baseName
         : '$baseName$ext';
     final mimeType = mimeFromExtension(extensionFromUrl(fileName));
-    final cacheDir = await _cacheDirectory();
+    final cacheDir = await cacheDirectory();
     final tempPath = '$cacheDir${Platform.pathSeparator}$id.part';
 
     if (registerStore) DownloadStore.instance.start(id, fileName);

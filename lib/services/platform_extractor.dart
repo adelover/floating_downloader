@@ -3,18 +3,24 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 
 import 'native_bridge.dart';
+import 'yt_dlp_backend.dart';
+
 
 class MediaFormat {
   final String label;
   final String url;
   final String mimeType;
   final String ext;
+  /// Non-null when this format must be requested from the yt-dlp backend
+  /// instead of downloaded as a direct URL.
+  final String? backendFormatId;
 
   const MediaFormat({
     required this.label,
     required this.url,
     required this.mimeType,
     required this.ext,
+    this.backendFormatId,
   });
 }
 
@@ -24,6 +30,7 @@ class MediaInfo {
   final String title;
   final String? author;
   final String? thumbnailUrl;
+  final String? duration;
   final List<MediaFormat> formats;
   final String sourceUrl;
   final String referer;
@@ -32,6 +39,7 @@ class MediaInfo {
     required this.title,
     this.author,
     this.thumbnailUrl,
+    this.duration,
     required this.formats,
     required this.sourceUrl,
     required this.referer,
@@ -83,28 +91,56 @@ class PlatformExtractor {
   }
 
   // ---------------------------------------------------------------------
-  // یوتیوب — فقط متادیتا (بدون دانلود فایل، طبق محدودیت‌های یوتیوب)
+  // yt-dlp backend — استخراج واقعی متادیتا و فرمت‌های قابل دانلود
   // ---------------------------------------------------------------------
-  static Future<MediaInfo> youtubeMeta(String url) async {
-    final resp = await _http.get(
-      'https://www.youtube.com/oembed',
-      queryParameters: {'url': url, 'format': 'json'},
-    );
-    if (resp.statusCode != 200 || resp.data is! Map) {
+  static Future<MediaInfo> ytDlp(String url) async {
+    try {
+      final data = await YtDlpBackendService.getInfo(url);
+      final rawFormats = (data['qualities'] as List?) ?? const [];
+      final formats = <MediaFormat>[];
+      for (final raw in rawFormats) {
+        if (raw is! Map) continue;
+        final id = raw['id']?.toString();
+        if (id == null || id.isEmpty) continue;
+        final label = raw['label']?.toString() ?? id;
+        final isAudio = id == 'bestaudio/best';
+        formats.add(
+          MediaFormat(
+            label: label,
+            url: url,
+            mimeType: isAudio ? 'audio/mpeg' : 'video/mp4',
+            ext: isAudio ? '.mp3' : '.mp4',
+            backendFormatId: id,
+          ),
+        );
+      }
+      if (formats.isEmpty) {
+        throw PlatformExtractorException('هیچ فرمت قابل دانلودی از yt-dlp دریافت نشد.');
+      }
+      return MediaInfo(
+        title: data['title']?.toString() ?? 'رسانه',
+        author: data['uploader']?.toString(),
+        thumbnailUrl: data['thumbnail']?.toString().isNotEmpty == true
+            ? data['thumbnail']?.toString()
+            : null,
+        duration: data['duration']?.toString(),
+        formats: formats,
+        sourceUrl: url,
+        referer: url,
+      );
+    } on PlatformExtractorException {
+      rethrow;
+    } catch (e) {
       throw PlatformExtractorException(
-        'اطلاعات این ویدیوی یوتیوب پیدا نشد. لینک را بررسی کنید (باید عمومی باشد).',
+        'ارتباط با سرویس yt-dlp برقرار نشد: ${e.toString()}',
       );
     }
-    final data = resp.data as Map;
-    return MediaInfo(
-      title: (data['title'] ?? 'ویدیوی یوتیوب').toString(),
-      author: data['author_name']?.toString(),
-      thumbnailUrl: data['thumbnail_url']?.toString(),
-      formats: const [],
-      sourceUrl: url,
-      referer: url,
-    );
   }
+
+  // ---------------------------------------------------------------------
+  // یوتیوب — فقط متادیتا (بدون دانلود فایل، طبق محدودیت‌های یوتیوب)
+  // ---------------------------------------------------------------------
+  static Future<MediaInfo> youtubeMeta(String url) => ytDlp(url);
 
   // ---------------------------------------------------------------------
   // اسپاتیفای — فقط متادیتا (فایل صوتی رمزگذاری‌شده و غیرقابل‌استخراج است)

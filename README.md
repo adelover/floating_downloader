@@ -50,3 +50,17 @@ foreground download service بومی (خارج از وابستگی‌های فع
 4. فعال‌سازی Overlay و دانلود از پنجره شناور.
 5. بررسی فایل در برنامه Files > Downloads.
 6. اجرای `flutter analyze` بدون خطا.
+
+
+## yt-dlp Backend
+
+این نسخه یک Backend واقعی Flask + yt-dlp داخل پوشه `python_backend/` دارد. برای YouTube، Instagram، TikTok و SoundCloud، برنامه ابتدا اطلاعات و کیفیت‌های واقعی را از Backend می‌گیرد و سپس فایل خروجی yt-dlp را به Downloads اندروید منتقل می‌کند.
+
+برای راه‌اندازی:
+1. وارد `python_backend/` شوید.
+2. `pip install -r requirements.txt` را اجرا کنید.
+3. `python server.py` را اجرا کنید.
+4. در برنامه به `تنظیمات → Backend استخراج → سرویس yt-dlp` بروید و آدرس سرور را وارد کنید، مثلاً `http://192.168.1.10:8000`.
+5. برای MP3 و ادغام video+audio، FFmpeg باید روی سرور نصب باشد.
+
+این Backend عمداً داخل APK به‌صورت Python interpreter بسته‌بندی نشده است؛ بنابراین برنامه Android و Backend باید از طریق شبکه به هم دسترسی داشته باشند.

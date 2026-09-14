@@ -14,6 +14,7 @@ import 'services/download_service.dart';
 import 'services/link_parser.dart';
 import 'services/native_bridge.dart';
 import 'services/platform_extractor.dart';
+import 'services/yt_dlp_backend.dart';
 import 'controllers/download_queue_controller.dart';
 import 'models/download_task.dart';
 import 'state/app_settings.dart';
@@ -686,11 +687,19 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
     if (!await DownloadGateService.ensureUnlocked(context)) return;
     setState(() => downloadingFormats.add(format.url));
     try {
-      await DownloadService.download(
-        url: format.url,
-        preferredName: analyzedInfo?.title,
-        headers: {'Referer': analyzedInfo?.referer ?? ''},
-      );
+      if (format.backendFormatId != null) {
+        await YtDlpBackendService.download(
+          url: analyzedInfo!.sourceUrl,
+          formatId: format.backendFormatId!,
+          preferredName: analyzedInfo!.title,
+        );
+      } else {
+        await DownloadService.download(
+          url: format.url,
+          preferredName: analyzedInfo?.title,
+          headers: {'Referer': analyzedInfo?.referer ?? ''},
+        );
+      }
       if (mounted) {
         _message('✓ دانلود کامل شد و در Downloads ذخیره شد.');
         await DownloadGateService.registerSuccessAndMaybeGate(context);
@@ -1140,6 +1149,15 @@ class _AnalyzedMediaCard extends StatelessWidget {
                       Text(
                         info.author!,
                         style: TextStyle(color: _muted, fontSize: 11.5),
+                      ),
+                    ],
+                    if (info.duration != null &&
+                        info.duration!.isNotEmpty &&
+                        info.duration != 'نامشخص') ...[
+                      SizedBox(height: 4),
+                      Text(
+                        'مدت: ${info.duration}',
+                        style: TextStyle(color: _muted, fontSize: 10.5),
                       ),
                     ],
                   ],
@@ -1810,46 +1828,46 @@ final List<_PlatformDef> _platformDefs = [
   _PlatformDef(
     id: 'instagram',
     title: 'اینستاگرام',
-    subtitle: 'دانلود پست/ریلز عمومی',
+    subtitle: 'استخراج واقعی با yt-dlp',
     icon: Icons.camera_alt_rounded,
     color: Color(0xFFE1306C),
     hint: 'لینک پست یا ریلز اینستاگرام را بچسبانید',
     downloadable: true,
     hosts: ['instagram.com'],
-    fetch: PlatformExtractor.instagram,
+    fetch: PlatformExtractor.ytDlp,
   ),
   _PlatformDef(
     id: 'tiktok',
     title: 'تیک‌تاک',
-    subtitle: 'دانلود ویدیوی عمومی',
+    subtitle: 'استخراج واقعی با yt-dlp',
     icon: Icons.music_video_rounded,
     color: Color(0xFF25F4EE),
     hint: 'لینک ویدیوی تیک‌تاک را بچسبانید',
     downloadable: true,
     hosts: ['tiktok.com'],
-    fetch: PlatformExtractor.tiktok,
+    fetch: PlatformExtractor.ytDlp,
   ),
   _PlatformDef(
     id: 'soundcloud',
     title: 'ساندکلاود',
-    subtitle: 'دانلود آهنگ عمومی',
+    subtitle: 'استخراج واقعی با yt-dlp',
     icon: Icons.cloud_rounded,
     color: Color(0xFFFF7700),
     hint: 'لینک آهنگ SoundCloud را بچسبانید',
     downloadable: true,
     hosts: ['soundcloud.com', 'snd.sc'],
-    fetch: PlatformExtractor.soundcloud,
+    fetch: PlatformExtractor.ytDlp,
   ),
   _PlatformDef(
     id: 'youtube',
     title: 'یوتیوب',
-    subtitle: 'فقط اطلاعات + باز کردن در اپ',
+    subtitle: 'دانلود و استخراج کیفیت با yt-dlp',
     icon: Icons.smart_display_rounded,
     color: Color(0xFFFF0000),
     hint: 'لینک ویدیوی یوتیوب را بچسبانید',
-    downloadable: false,
+    downloadable: true,
     hosts: ['youtube.com', 'youtu.be', 'm.youtube.com'],
-    fetch: PlatformExtractor.youtubeMeta,
+    fetch: PlatformExtractor.ytDlp,
   ),
   _PlatformDef(
     id: 'spotify',
@@ -1974,11 +1992,19 @@ class _PlatformDetailScreenState extends State<PlatformDetailScreen> {
     if (!await DownloadGateService.ensureUnlocked(context)) return;
     setState(() => downloadingFormats.add(format.url));
     try {
-      await DownloadService.download(
-        url: format.url,
-        preferredName: info?.title,
-        headers: {'Referer': info?.referer ?? widget.def.hint},
-      );
+      if (format.backendFormatId != null) {
+        await YtDlpBackendService.download(
+          url: info!.sourceUrl,
+          formatId: format.backendFormatId!,
+          preferredName: info!.title,
+        );
+      } else {
+        await DownloadService.download(
+          url: format.url,
+          preferredName: info?.title,
+          headers: {'Referer': info?.referer ?? widget.def.hint},
+        );
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('✓ دانلود کامل شد و در Downloads ذخیره شد.')),
@@ -2613,6 +2639,95 @@ class SettingsTab extends StatefulWidget {
 }
 
 class _SettingsTabState extends State<SettingsTab> {
+  Future<void> _editYtDlpBackend(
+    BuildContext context,
+    String current,
+  ) async {
+    final controller = TextEditingController(text: current);
+    final value = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('آدرس Backend yt-dlp'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: TextInputType.url,
+          textDirection: TextDirection.ltr,
+          decoration: const InputDecoration(
+            hintText: 'http://192.168.1.10:8000',
+            helperText: 'دستگاه و سرور باید روی یک شبکه یا اینترنت قابل‌دسترسی باشند.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('انصراف'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, controller.text),
+            child: const Text('ذخیره'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (value != null) {
+      await SettingsStore.setYtDlpBackendUrl(value);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              value.trim().isEmpty
+                  ? 'Backend غیرفعال شد.'
+                  : 'آدرس Backend ذخیره شد.',
+            ),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _editYtDlpProxy(
+    BuildContext context,
+    String current,
+  ) async {
+    final controller = TextEditingController(text: current);
+    final value = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Proxy برای yt-dlp'),
+        content: TextField(
+          controller: controller,
+          keyboardType: TextInputType.url,
+          textDirection: TextDirection.ltr,
+          decoration: const InputDecoration(
+            hintText: 'http://user:pass@host:port',
+            helperText: 'اختیاری — برای درخواست‌های yt-dlp استفاده می‌شود.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('انصراف'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, controller.text),
+            child: const Text('ذخیره'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (value != null) {
+      await SettingsStore.setYtDlpProxy(value);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Proxy ذخیره شد.')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -2629,7 +2744,7 @@ class _SettingsTabState extends State<SettingsTab> {
           _SettingsHeader(
             icon: Icons.settings_suggest_rounded,
             title: 'Floating Downloader',
-            subtitle: 'نسخه 3.5 • Android',
+            subtitle: 'نسخه 3.6 • Android',
           ),
           SizedBox(height: 16),
           _SectionTitle(title: 'ظاهر برنامه'),
@@ -2715,6 +2830,30 @@ class _SettingsTabState extends State<SettingsTab> {
             color: _cyan,
           ),
           SizedBox(height: 16),
+          _SectionTitle(title: 'Backend استخراج'),
+          ValueListenableBuilder<String>(
+            valueListenable: SettingsStore.ytDlpBackendUrl,
+            builder: (context, value, _) => _SettingTile(
+              icon: Icons.cloud_sync_rounded,
+              title: 'سرویس yt-dlp',
+              subtitle: value.isEmpty
+                  ? 'تنظیم نشده — برای YouTube/TikTok/Instagram/SoundCloud لازم است'
+                  : value,
+              color: _cyan,
+              onTap: () => _editYtDlpBackend(context, value),
+            ),
+          ),
+          ValueListenableBuilder<String>(
+            valueListenable: SettingsStore.ytDlpProxy,
+            builder: (context, value, _) => _SettingTile(
+              icon: Icons.vpn_lock_rounded,
+              title: 'Proxy برای yt-dlp',
+              subtitle: value.isEmpty ? 'بدون Proxy' : value,
+              color: _primary,
+              onTap: () => _editYtDlpProxy(context, value),
+            ),
+          ),
+          SizedBox(height: 16),
           _SectionTitle(title: 'پشتیبانی'),
           _SettingTile(
             icon: Icons.telegram,
@@ -2729,12 +2868,12 @@ class _SettingsTabState extends State<SettingsTab> {
           _SettingTile(
             icon: Icons.info_outline_rounded,
             title: 'درباره برنامه',
-            subtitle: 'نسخه 3.5.0',
+            subtitle: 'نسخه 3.6.0',
             color: _muted,
             onTap: () => showAboutDialog(
               context: context,
               applicationName: 'Floating Downloader',
-              applicationVersion: '3.5.0',
+              applicationVersion: '3.6.0',
               applicationIcon: Icon(Icons.download_rounded, color: _primary),
               children: [
                 Text(
