@@ -2,6 +2,8 @@ package com.example.floating_downloader
 
 import android.content.ContentValues
 import android.content.Intent
+import android.Manifest
+import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
@@ -11,12 +13,24 @@ import android.provider.MediaStore
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import androidx.work.Data
+import androidx.work.OneTimeWorkRequest
+import androidx.work.WorkManager
+import java.util.UUID
 import java.io.File
 
 class MainActivity : FlutterActivity() {
     private val channelName = "com.example.floating_downloader/storage"
     private var methodChannel: MethodChannel? = null
     private var pendingSharedText: String? = null
+
+    override fun onCreate(savedInstanceState: android.os.Bundle?) {
+        super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 701)
+        }
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -27,6 +41,70 @@ class MainActivity : FlutterActivity() {
         methodChannel = channel
         channel.setMethodCallHandler { call, result ->
             when (call.method) {
+                "enqueueNativeDownload" -> {
+                    val url = call.argument<String>("url")?.trim()
+                    val name = call.argument<String>("fileName")?.trim()
+                    val mime = call.argument<String>("mimeType") ?: "application/octet-stream"
+                    if (url.isNullOrBlank() ||
+                        !(url.startsWith("http://") || url.startsWith("https://")) ||
+                        name.isNullOrBlank()) {
+                        result.error("INVALID_ARGUMENT", "A public HTTP/HTTPS URL and fileName are required.", null)
+                        return@setMethodCallHandler
+                    }
+                    val request = OneTimeWorkRequest.Builder(NativeDownloadWorker::class.java)
+                        .setInputData(Data.Builder()
+                            .putString(NativeDownloadWorker.KEY_URL, url)
+                            .putString(NativeDownloadWorker.KEY_NAME, name)
+                            .putString(NativeDownloadWorker.KEY_MIME, mime)
+                            .build())
+                        .build()
+                    WorkManager.getInstance(applicationContext).enqueue(request)
+                    result.success(request.id.toString())
+                }
+
+                "pauseNativeDownload", "resumeNativeDownload" -> {
+                    val id = call.argument<String>("id")
+                    if (id.isNullOrBlank()) {
+                        result.error("INVALID_ARGUMENT", "id is required.", null)
+                        return@setMethodCallHandler
+                    }
+                    getSharedPreferences(NativeDownloadWorker.PREFS, MODE_PRIVATE)
+                        .edit().putBoolean("$id:paused", call.method == "pauseNativeDownload").apply()
+                    result.success(true)
+                }
+
+                "cancelNativeDownload" -> {
+                    val id = call.argument<String>("id")
+                    if (id.isNullOrBlank()) {
+                        result.error("INVALID_ARGUMENT", "id is required.", null)
+                        return@setMethodCallHandler
+                    }
+                    val workId = runCatching { UUID.fromString(id) }.getOrNull()
+                    if (workId == null) {
+                        result.error("INVALID_ARGUMENT", "id is not a WorkManager UUID.", null)
+                        return@setMethodCallHandler
+                    }
+                    WorkManager.getInstance(applicationContext).cancelWorkById(workId)
+                    getSharedPreferences(NativeDownloadWorker.PREFS, MODE_PRIVATE)
+                        .edit().putString("$id:state", "cancelled").apply()
+                    result.success(true)
+                }
+
+                "getNativeDownloadStatus" -> {
+                    val id = call.argument<String>("id")
+                    if (id.isNullOrBlank()) {
+                        result.error("INVALID_ARGUMENT", "id is required.", null)
+                        return@setMethodCallHandler
+                    }
+                    val prefs = getSharedPreferences(NativeDownloadWorker.PREFS, MODE_PRIVATE)
+                    result.success(mapOf(
+                        "id" to id,
+                        "state" to (prefs.getString("$id:state", "queued") ?: "queued"),
+                        "progress" to prefs.getFloat("$id:progress", 0f).toDouble(),
+                        "value" to prefs.getString("$id:value", null)
+                    ))
+                }
+
                 "getCacheDirectory" -> result.success(cacheDir.absolutePath)
 
                 "getSharedText" -> {
