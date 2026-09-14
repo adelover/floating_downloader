@@ -19,7 +19,7 @@ class DownloadManagerRepository(private val context: Context) {
         mimeType: String,
         isPaused: () -> Boolean,
         isCancelled: () -> Boolean,
-        onProgress: (received: Long, total: Long) -> Unit
+        onProgress: suspend (received: Long, total: Long) -> Unit
     ): Result<Uri> {
         val parsed = runCatching { URL(url) }.getOrElse {
             return Result.failure(IllegalArgumentException("Invalid download URL"))
