@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../models/download_task.dart';
 import '../services/download_service.dart';
 import '../state/app_settings.dart';
+import '../state/download_store.dart';
 
 /// Coordinates downloads without allowing an unbounded number of network
 /// requests. Work continues when the Flutter UI is backgrounded.
@@ -116,21 +117,22 @@ class DownloadQueueController extends ChangeNotifier {
           request = candidate;
           break;
         }
-
-        @override
-        void dispose() {
-          SettingsStore.maxConcurrent.removeListener(_onConcurrencyChanged);
-          super.dispose();
-        }
       }
       if (request == null) return;
-      final future = _run(request);
-      _running[request.task.id] = future;
+      final selectedRequest = request;
+      final future = _run(selectedRequest);
+      _running[selectedRequest.task.id] = future;
       future.whenComplete(() {
-        _running.remove(request.task.id);
+        _running.remove(selectedRequest.task.id);
         _pump();
       });
     }
+  }
+
+  @override
+  void dispose() {
+    SettingsStore.maxConcurrent.removeListener(_onConcurrencyChanged);
+    super.dispose();
   }
 
   Future<void> _run(_QueuedRequest request) async {

@@ -20,13 +20,13 @@ import 'state/app_settings.dart';
 import 'state/download_store.dart';
 
 Color get _bg =>
-    ThemeStore.isDark.value ? Color(0xFF090B12) : Color(0xFFF3F4FA);
+    ThemeStore.isDark.value ? Color(0xFF17212B) : Color(0xFFF4F7FA);
 Color get _surface =>
-    ThemeStore.isDark.value ? Color(0xFF121722) : Color(0xFFFFFFFF);
+    ThemeStore.isDark.value ? Color(0xFF202B36) : Color(0xFFFFFFFF);
 Color get _surface2 =>
-    ThemeStore.isDark.value ? Color(0xFF181E2B) : Color(0xFFEEF0F8);
-Color get _primary => Color(0xFF7C5CFF);
-Color get _cyan => Color(0xFF2AABEE);
+    ThemeStore.isDark.value ? Color(0xFF253442) : Color(0xFFE8F0F6);
+Color get _primary => Color(0xFF229ED9);
+Color get _cyan => Color(0xFF5DB8E5);
 Color get _success =>
     ThemeStore.isDark.value ? Color(0xFF36D399) : Color(0xFF13A76F);
 Color get _danger =>
@@ -70,6 +70,7 @@ class DownloaderApp extends StatelessWidget {
           brightness: isDark ? Brightness.dark : Brightness.light,
           scaffoldBackgroundColor: _bg,
           fontFamily: 'sans',
+          useMaterial3: true,
           colorScheme: isDark
               ? ColorScheme.dark(
                   primary: _primary,
@@ -84,6 +85,27 @@ class DownloaderApp extends StatelessWidget {
                   error: _danger,
                 ),
           splashFactory: InkSparkle.splashFactory,
+          appBarTheme: AppBarTheme(
+            backgroundColor: _bg,
+            surfaceTintColor: Colors.transparent,
+            elevation: 0,
+            scrolledUnderElevation: 0,
+            toolbarHeight: 56,
+            titleTextStyle: TextStyle(
+              color: isDark ? Colors.white : Color(0xFF17212B),
+              fontSize: 19,
+              fontWeight: FontWeight.w800,
+            ),
+            iconTheme: IconThemeData(color: _muted, size: 22),
+          ),
+          popupMenuTheme: PopupMenuThemeData(
+            color: _surface,
+            surfaceTintColor: Colors.transparent,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            elevation: 4,
+          ),
           inputDecorationTheme: InputDecorationTheme(
             filled: true,
             fillColor: _surface,
@@ -112,7 +134,8 @@ class DownloaderApp extends StatelessWidget {
           navigationBarTheme: NavigationBarThemeData(
             backgroundColor: _surface,
             indicatorColor: _primary.withOpacity(.18),
-            height: 72,
+            height: 68,
+            labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
             labelTextStyle: WidgetStateProperty.resolveWith(
               (states) => TextStyle(
                 color: states.contains(WidgetState.selected)
@@ -762,15 +785,36 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
               child: _Header(
                 title: 'Floating Downloader',
                 subtitle: 'سریع، تمیز و بدون مسیرهای جعلی',
-                trailing: IconButton(
-                  onPressed: _toggleOverlay,
-                  tooltip: 'پنجره شناور',
-                  icon: Icon(
-                    overlayActive
-                        ? Icons.bubble_chart_rounded
-                        : Icons.bubble_chart_outlined,
-                    color: overlayActive ? _cyan : _muted,
-                  ),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      onPressed: _toggleOverlay,
+                      tooltip: 'Floating window',
+                      icon: Icon(
+                        overlayActive ? Icons.bubble_chart_rounded : Icons.bubble_chart_outlined,
+                        color: overlayActive ? _cyan : _muted,
+                      ),
+                    ),
+                    PopupMenuButton<String>(
+                      tooltip: 'Menu',
+                      icon: Icon(Icons.more_vert_rounded, color: _muted),
+                      onSelected: (value) {
+                        if (value == 'history') {
+                          _openDownloads(context);
+                        } else if (value == 'browser') {
+                          _openBrowser(context);
+                        } else {
+                          Navigator.of(context).push(MaterialPageRoute(builder: (_) => SettingsTab()));
+                        }
+                      },
+                      itemBuilder: (_) => [
+                        PopupMenuItem(value: 'history', child: Text('Download history')),
+                        PopupMenuItem(value: 'browser', child: Text('Browser')),
+                        PopupMenuItem(value: 'settings', child: Text('Settings')),
+                      ],
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -1363,7 +1407,11 @@ class _StatCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: _surface,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withOpacity(.05)),
+        border: Border.all(
+          color: ThemeStore.isDark.value
+              ? Colors.white.withOpacity(.06)
+              : Color(0xFFE2E8EF),
+        ),
       ),
       child: Row(
         children: [
@@ -1698,7 +1746,7 @@ class _BrowserTabState extends State<BrowserTab> {
             value: progress == 0 ? null : progress,
             minHeight: 2,
             color: _cyan,
-            backgroundColor: Colors.transparent,
+            backgroundColor: _bg,
           ),
         Expanded(
           child: Stack(
@@ -1767,7 +1815,7 @@ class _BrowserTabState extends State<BrowserTab> {
                 'مرورگر هوشمند',
                 style: TextStyle(fontWeight: FontWeight.w900),
               ),
-              backgroundColor: Colors.transparent,
+              backgroundColor: _bg,
             ),
       body: body,
       floatingActionButton: detected.isEmpty
@@ -1882,7 +1930,7 @@ class PlatformsTab extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: Text('پلتفرم‌ها', style: TextStyle(fontWeight: FontWeight.w900)),
-        backgroundColor: Colors.transparent,
+        backgroundColor: _bg,
       ),
       body: ListView(
         padding: EdgeInsets.fromLTRB(16, 6, 16, 24),
@@ -2008,7 +2056,7 @@ class _PlatformDetailScreenState extends State<PlatformDetailScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(def.title, style: TextStyle(fontWeight: FontWeight.w900)),
-        backgroundColor: Colors.transparent,
+        backgroundColor: _bg,
       ),
       body: ListView(
         padding: EdgeInsets.fromLTRB(16, 6, 16, 28),
@@ -2213,7 +2261,7 @@ class _HistoryTabState extends State<HistoryTab> {
           'دانلودهای من',
           style: TextStyle(fontWeight: FontWeight.w900),
         ),
-        backgroundColor: Colors.transparent,
+        backgroundColor: _bg,
         actions: [
           AnimatedBuilder(
             animation: DownloadStore.instance,
@@ -2598,7 +2646,11 @@ class _CardShell extends StatelessWidget {
       decoration: BoxDecoration(
         color: _surface,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white.withOpacity(.05)),
+        border: Border.all(
+          color: ThemeStore.isDark.value
+              ? Colors.white.withOpacity(.06)
+              : Color(0xFFE2E8EF),
+        ),
       ),
       child: child,
     );
@@ -2621,7 +2673,7 @@ class _SettingsTabState extends State<SettingsTab> {
           'تنظیمات',
           style: TextStyle(fontWeight: FontWeight.w900),
         ),
-        backgroundColor: Colors.transparent,
+        backgroundColor: _bg,
       ),
       body: ListView(
         padding: EdgeInsets.fromLTRB(16, 4, 16, 28),
