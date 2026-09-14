@@ -2,6 +2,10 @@ name: Android Release
 
 on:
   push:
+    branches:
+      - main
+      - "adelover-*"
+  pull_request:
     branches: ["main"]
   workflow_dispatch:
 
