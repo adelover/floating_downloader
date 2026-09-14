@@ -34,7 +34,7 @@ class NativeDownloadWorker(
             return fail("Only HTTP and HTTPS URLs are supported")
         }
         createNotificationChannel()
-        setForeground(createForegroundInfo(0, fileName))
+        setForeground(createForegroundInfo(0.0, fileName))
         writeStatus("running", 0.0, null)
 
         val connection = (URL(urlText).openConnection() as HttpURLConnection).apply {
