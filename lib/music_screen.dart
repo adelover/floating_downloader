@@ -242,7 +242,9 @@ class _MusicScreenState extends State<MusicScreen> {
   }
 
   Widget _miniPlayer(ThemeData theme) {
-    final max = _duration.inMilliseconds > 0 ? _duration.inMilliseconds.toDouble() : 1;
+    final max = _duration.inMilliseconds > 0
+        ? _duration.inMilliseconds.toDouble()
+        : 1.0;
     return Container(
       margin: const EdgeInsets.fromLTRB(14, 0, 14, 12),
       padding: const EdgeInsets.fromLTRB(18, 8, 8, 6),
