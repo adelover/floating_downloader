@@ -38,6 +38,7 @@ jobs:
           rm -rf /tmp/gradle-wrapper-gen
           mkdir -p /tmp/gradle-wrapper-gen
           cd /tmp/gradle-wrapper-gen
+          touch settings.gradle
           gradle wrapper --gradle-version 8.13 --distribution-type all
           cp -f gradlew gradlew.bat "$GITHUB_WORKSPACE/android/"
           cp -f gradle/wrapper/gradle-wrapper.jar "$GITHUB_WORKSPACE/android/gradle/wrapper/"
