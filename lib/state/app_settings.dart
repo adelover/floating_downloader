@@ -23,16 +23,33 @@ class ThemeStore {
 
 class SettingsStore {
   static final ValueNotifier<bool> wifiOnly = ValueNotifier<bool>(false);
+  static final ValueNotifier<int> maxConcurrent = ValueNotifier<int>(2);
+  static final ValueNotifier<bool> keepHistory = ValueNotifier<bool>(true);
 
   static Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
     wifiOnly.value = prefs.getBool('wifi_only') ?? false;
+    maxConcurrent.value =
+        (prefs.getInt('max_concurrent') ?? 2).clamp(1, 4).toInt();
+    keepHistory.value = prefs.getBool('keep_history') ?? true;
   }
 
   static Future<void> setWifiOnly(bool value) async {
     wifiOnly.value = value;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('wifi_only', value);
+  }
+
+  static Future<void> setMaxConcurrent(int value) async {
+    maxConcurrent.value = value.clamp(1, 4).toInt();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('max_concurrent', maxConcurrent.value);
+  }
+
+  static Future<void> setKeepHistory(bool value) async {
+    keepHistory.value = value;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('keep_history', value);
   }
 }
 

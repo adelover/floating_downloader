@@ -11,8 +11,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'services/download_service.dart';
+import 'services/link_parser.dart';
 import 'services/native_bridge.dart';
 import 'services/platform_extractor.dart';
+import 'controllers/download_queue_controller.dart';
+import 'models/download_task.dart';
 import 'state/app_settings.dart';
 import 'state/download_store.dart';
 
@@ -561,12 +564,9 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
       final data = await Clipboard.getData(Clipboard.kTextPlain);
       final text = data?.text?.trim();
       if (text == null || text.isEmpty) return;
-      final uri = Uri.tryParse(text);
-      final isLink = uri != null &&
-          (uri.scheme == 'http' || uri.scheme == 'https') &&
-          uri.hasAuthority;
-      if (!isLink || text == urlController.text) return;
-      if (mounted) setState(() => clipboardSuggestion = text);
+      final links = LinkParser.extractHttpLinks(text);
+      if (links.isEmpty || text == urlController.text) return;
+      if (mounted) setState(() => clipboardSuggestion = links.join('\n'));
     } catch (_) {}
   }
 
@@ -703,30 +703,37 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
   }
 
   Future<void> _download() async {
-    final url = urlController.text.trim();
-    if (url.isEmpty) {
+    final links = LinkParser.extractHttpLinks(urlController.text);
+    if (links.isEmpty) {
       _message('اول لینک فایل را وارد کنید.');
       return;
     }
 
     // اگر لینک متعلق به یکی از پلتفرم‌های پشتیبانی‌شده باشد، به‌جای دانلود
     // خام صفحه (که باعث فایل جعلی می‌شد)، تحلیل واقعی انجام می‌شود.
-    if (detectPlatform(url) != null) {
-      await _analyzeLink(url);
+    if (links.length == 1 && detectPlatform(links.first) != null) {
+      await _analyzeLink(links.first);
       return;
     }
 
     if (!await DownloadGateService.ensureUnlocked(context)) return;
     setState(() => downloading = true);
     try {
-      final item = await DownloadService.download(url: url);
+      var completed = 0;
+      for (final url in links) {
+        await DownloadService.download(url: url);
+        completed++;
+      }
       if (mounted) {
-        _message('✓ ${item.name} در Downloads ذخیره شد.');
+        _message('✓ $completed دانلود در Downloads ذخیره شد.');
         urlController.clear();
         await DownloadGateService.registerSuccessAndMaybeGate(context);
       }
     } catch (e) {
-      if (mounted) _message(_friendlyError(e));
+      if (mounted) {
+        setState(() => analyzeError = _friendlyError(e));
+        _message('دانلود ناموفق بود؛ دوباره تلاش کنید.');
+      }
     } finally {
       if (mounted) setState(() => downloading = false);
     }
@@ -810,6 +817,10 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
                           analyzeError!,
                           style: TextStyle(color: _danger, fontSize: 12),
                         ),
+                      ),
+                      TextButton(
+                        onPressed: downloading ? null : _download,
+                        child: Text('تلاش دوباره'),
                       ),
                       IconButton(
                         padding: EdgeInsets.zero,
@@ -2180,6 +2191,7 @@ class HistoryTab extends StatefulWidget {
 class _HistoryTabState extends State<HistoryTab> {
   final searchController = TextEditingController();
   String query = '';
+  String category = 'all';
 
   @override
   void dispose() {
@@ -2216,10 +2228,15 @@ class _HistoryTabState extends State<HistoryTab> {
         ],
       ),
       body: AnimatedBuilder(
-        animation: DownloadStore.instance,
+        animation: Listenable.merge(
+          [DownloadStore.instance, DownloadQueueController.instance],
+        ),
         builder: (context, _) {
           final store = DownloadStore.instance;
-          if (store.completed.isEmpty && store.active.isEmpty) {
+          final queue = DownloadQueueController.instance;
+          final activeTasks = queue.activeTasks.toList();
+          if (store.completed.isEmpty && store.active.isEmpty &&
+              activeTasks.isEmpty) {
             return _EmptyState(
               icon: Icons.download_for_offline_rounded,
               title: 'هنوز دانلودی ندارید',
@@ -2231,8 +2248,15 @@ class _HistoryTabState extends State<HistoryTab> {
               ? store.completed
               : store.completed
                   .where((e) =>
-                      e.name.toLowerCase().contains(query.trim().toLowerCase()))
+                      (e.name.toLowerCase().contains(query.trim().toLowerCase()) || e.url.toLowerCase().contains(query.trim().toLowerCase())))
                   .toList();
+          final categorized = filtered.where((item) {
+            if (category == 'all') return true;
+            if (category == 'video') return item.mimeType.startsWith('video/');
+            if (category == 'audio') return item.mimeType.startsWith('audio/');
+            return !item.mimeType.startsWith('video/') &&
+                !item.mimeType.startsWith('audio/');
+          }).toList();
 
           return ListView(
             padding: EdgeInsets.fromLTRB(16, 6, 16, 24),
@@ -2250,19 +2274,43 @@ class _HistoryTabState extends State<HistoryTab> {
                     ),
                   ),
                 ),
-              if (store.active.isNotEmpty) ...[
+              if (store.completed.isNotEmpty)
+                Wrap(
+                  spacing: 6,
+                  children: ['all', 'video', 'audio', 'other']
+                      .map(
+                        (value) => ChoiceChip(
+                          label: Text(value),
+                          selected: category == value,
+                          onSelected: (_) =>
+                              setState(() => category = value),
+                        ),
+                      )
+                      .toList(),
+                ),
+              if (store.active.isNotEmpty || activeTasks.isNotEmpty) ...[
                 _SectionTitle(title: 'در حال دانلود'),
-                ...store.active.entries.map(
+                ...activeTasks.map(
+                  (task) => _ActiveDownloadCard(
+                    id: task.id,
+                    name: task.name,
+                    progress: task.progress,
+                  ),
+                ),
+                ...store.active.entries
+                    .where((entry) => !queue.tasks.containsKey(entry.key))
+                    .map(
                   (entry) => _ActiveDownloadCard(
+                    id: entry.key,
                     name: store.activeNames[entry.key] ?? 'فایل',
                     progress: entry.value,
                   ),
                 ),
                 SizedBox(height: 16),
               ],
-              if (filtered.isNotEmpty) ...[
+              if (categorized.isNotEmpty) ...[
                 _SectionTitle(title: 'تکمیل‌شده'),
-                ...filtered.map((item) => _HistoryCard(item: item)),
+                ...categorized.map((item) => _HistoryCard(item: item)),
               ] else if (query.trim().isNotEmpty)
                 Padding(
                   padding: EdgeInsets.only(top: 24),
@@ -2302,18 +2350,26 @@ class _HistoryTabState extends State<HistoryTab> {
 }
 
 class _ActiveDownloadCard extends StatelessWidget {
+  final String id;
   final String name;
   final double progress;
 
   _ActiveDownloadCard({
+    required this.id,
     required this.name,
     required this.progress,
   });
 
   @override
   Widget build(BuildContext context) {
-    return _CardShell(
-      child: Row(
+    return AnimatedBuilder(
+      animation: DownloadQueueController.instance,
+      builder: (context, _) {
+        final task = DownloadQueueController.instance.tasks[id];
+        final paused = task?.status == DownloadTaskStatus.paused;
+        final failed = task?.status == DownloadTaskStatus.failed;
+        return _CardShell(
+          child: Row(
         children: [
           _FileIcon(icon: Icons.downloading_rounded, color: _cyan),
           SizedBox(width: 12),
@@ -2335,7 +2391,27 @@ class _ActiveDownloadCard extends StatelessWidget {
               ],
             ),
           ),
-          SizedBox(width: 10),
+          IconButton(
+            tooltip: failed ? 'تلاش دوباره' : (paused ? 'ادامه' : 'مکث'),
+            icon: Icon(
+              failed
+                  ? Icons.refresh_rounded
+                  : (paused ? Icons.play_arrow_rounded : Icons.pause_rounded),
+            ),
+            onPressed: task == null
+                ? null
+                : () => failed
+                    ? DownloadQueueController.instance.retry(id)
+                    : paused
+                        ? DownloadQueueController.instance.resume(id)
+                        : DownloadQueueController.instance.pause(id),
+          ),
+          IconButton(
+            tooltip: 'لغو',
+            icon: Icon(Icons.close_rounded, color: _danger),
+            onPressed: () => DownloadQueueController.instance.cancel(id),
+          ),
+          SizedBox(width: 4),
           Text(
             '${(progress * 100).round()}%',
             style: TextStyle(
@@ -2344,8 +2420,10 @@ class _ActiveDownloadCard extends StatelessWidget {
               fontSize: 11,
             ),
           ),
-        ],
-      ),
+          ],
+        ),
+      );
+      },
     );
   }
 }
@@ -2577,6 +2655,39 @@ class _SettingsTabState extends State<SettingsTab> {
               color: _primary,
               value: value,
               onChanged: SettingsStore.setWifiOnly,
+            ),
+          ),
+          ValueListenableBuilder<int>(
+            valueListenable: SettingsStore.maxConcurrent,
+            builder: (context, value, _) => _SettingTile(
+              icon: Icons.speed_rounded,
+              title: 'همزمانی دانلود ($value)',
+              subtitle: 'تعداد دانلودهای همزمان (۱ تا ۴)',
+              color: _cyan,
+              onTap: () => showModalBottomSheet<void>(
+                context: context,
+                builder: (_) => SafeArea(
+                  child: Slider(
+                    min: 1,
+                    max: 4,
+                    divisions: 3,
+                    value: value.toDouble(),
+                    onChanged: (v) =>
+                        SettingsStore.setMaxConcurrent(v.round()),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          ValueListenableBuilder<bool>(
+            valueListenable: SettingsStore.keepHistory,
+            builder: (context, value, _) => _SettingSwitchTile(
+              icon: Icons.history_rounded,
+              title: 'ذخیره تاریخچه دانلود',
+              subtitle: 'ثبت فایل‌های جدید در تاریخچه برنامه',
+              color: _success,
+              value: value,
+              onChanged: SettingsStore.setKeepHistory,
             ),
           ),
           _SettingTile(
