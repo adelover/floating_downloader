@@ -33,19 +33,9 @@ jobs:
       - name: Get packages
         run: flutter pub get
 
-      - name: Ensure Gradle wrapper exists
-        run: |
-          rm -rf /tmp/gradle-wrapper-gen
-          mkdir -p /tmp/gradle-wrapper-gen
-          cd /tmp/gradle-wrapper-gen
-          touch settings.gradle
-          gradle wrapper --gradle-version 8.13 --distribution-type all
-          cp -f gradlew gradlew.bat "$GITHUB_WORKSPACE/android/"
-          cp -f gradle/wrapper/gradle-wrapper.jar "$GITHUB_WORKSPACE/android/gradle/wrapper/"
-          chmod +x "$GITHUB_WORKSPACE/android/gradlew"
-
       - name: Generate launcher icons
         run: dart run flutter_launcher_icons
+
 
       - name: Build release APK
         run: flutter build apk --release --android-skip-build-dependency-validation

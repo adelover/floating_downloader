@@ -9,27 +9,12 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:youtube_explode_dart/youtube_explode_dart.dart' as yt;
 
-/// رنگ‌های حالت تاریک و روشن. همه‌ی ویجت‌های برنامه با همون اسم‌های قبلی
-/// (_bg، _surface, _primary و…) کار می‌کنن؛ فقط این‌ها الان به تنظیمات
-/// تم واکنش نشون می‌دن به‌جای اینکه یک رنگ ثابت باشن.
-class ThemeStore {
-  static final ValueNotifier<bool> isDark = ValueNotifier<bool>(true);
-
-  static Future<void> load() async {
-    final prefs = await SharedPreferences.getInstance();
-    isDark.value = prefs.getBool('dark_theme') ?? true;
-  }
-
-  static Future<void> setDark(bool value) async {
-    isDark.value = value;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('dark_theme', value);
-  }
-
-  static Future<void> toggle() => setDark(!isDark.value);
-}
+import 'services/download_service.dart';
+import 'services/native_bridge.dart';
+import 'services/platform_extractor.dart';
+import 'state/app_settings.dart';
+import 'state/download_store.dart';
 
 Color get _bg =>
     ThemeStore.isDark.value ? Color(0xFF090B12) : Color(0xFFF3F4FA);
@@ -47,8 +32,6 @@ Color get _muted =>
     ThemeStore.isDark.value ? Color(0xFF8D96A8) : Color(0xFF6B7280);
 Color get _bubbleOut =>
     ThemeStore.isDark.value ? Color(0xFF2B3547) : Color(0xFFE1F3FF);
-
-final _storageChannel = MethodChannel('com.example.floating_downloader/storage');
 
 @pragma('vm:entry-point')
 Future<void> overlayMain() async {
@@ -123,17 +106,6 @@ class DownloaderApp extends StatelessWidget {
             backgroundColor: _surface2,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
           ),
-          appBarTheme: AppBarTheme(
-            backgroundColor: _surface,
-            elevation: 0,
-            centerTitle: false,
-            surfaceTintColor: Colors.transparent,
-          ),
-          cardTheme: CardThemeData(
-            color: _surface,
-            elevation: 0,
-            margin: EdgeInsets.zero,
-          ),
           navigationBarTheme: NavigationBarThemeData(
             backgroundColor: _surface,
             indicatorColor: _primary.withOpacity(.18),
@@ -170,552 +142,6 @@ class DownloaderApp extends StatelessWidget {
         );
       },
     );
-  }
-}
-
-class DownloadItem {
-  final String id;
-  final String name;
-  final String url;
-  final String savedUri;
-  final String date;
-  final int bytes;
-  final String mimeType;
-
-  DownloadItem({
-    required this.id,
-    required this.name,
-    required this.url,
-    required this.savedUri,
-    required this.date,
-    required this.bytes,
-    required this.mimeType,
-  });
-
-  Map<String, dynamic> toJson() => {
-        'id': id,
-        'name': name,
-        'url': url,
-        'savedUri': savedUri,
-        'date': date,
-        'bytes': bytes,
-        'mimeType': mimeType,
-      };
-
-  factory DownloadItem.fromJson(Map<String, dynamic> json) => DownloadItem(
-        id: '${json['id'] ?? DateTime.now().microsecondsSinceEpoch}',
-        name: '${json['name'] ?? 'فایل دانلود شده'}',
-        url: '${json['url'] ?? ''}',
-        savedUri: '${json['savedUri'] ?? ''}',
-        date: '${json['date'] ?? ''}',
-        bytes: int.tryParse('${json['bytes'] ?? 0}') ?? 0,
-        mimeType: '${json['mimeType'] ?? 'application/octet-stream'}',
-      );
-}
-
-class DownloadStore extends ChangeNotifier {
-  DownloadStore._();
-  static final instance = DownloadStore._();
-
-  final List<DownloadItem> completed = [];
-  final Map<String, double> active = {};
-  final Map<String, String> activeNames = {};
-
-  Future<void> load() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getStringList('downloads') ?? [];
-    completed
-      ..clear()
-      ..addAll(raw.map((e) {
-        try {
-          return DownloadItem.fromJson(jsonDecode(e) as Map<String, dynamic>);
-        } catch (_) {
-          return null;
-        }
-      }).whereType<DownloadItem>());
-    notifyListeners();
-  }
-
-  Future<void> add(DownloadItem item) async {
-    completed.insert(0, item);
-    if (completed.length > 100) {
-      completed.removeRange(100, completed.length);
-    }
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList(
-      'downloads',
-      completed.map((e) => jsonEncode(e.toJson())).toList(),
-    );
-    notifyListeners();
-  }
-
-  Future<void> clear() async {
-    completed.clear();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('downloads');
-    notifyListeners();
-  }
-
-  Future<void> remove(String id, String savedUri) async {
-    await DownloadService.deleteFile(savedUri);
-    completed.removeWhere((e) => e.id == id);
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList(
-      'downloads',
-      completed.map((e) => jsonEncode(e.toJson())).toList(),
-    );
-    notifyListeners();
-  }
-
-  void start(String id, String name) {
-    active[id] = 0;
-    activeNames[id] = name;
-    notifyListeners();
-  }
-
-  void progress(String id, double value) {
-    if (!active.containsKey(id)) return;
-    active[id] = value.clamp(0, 1);
-    notifyListeners();
-  }
-
-  void finish(String id) {
-    active.remove(id);
-    activeNames.remove(id);
-    notifyListeners();
-  }
-
-  void fail(String id) {
-    active.remove(id);
-    activeNames.remove(id);
-    notifyListeners();
-  }
-}
-
-class SettingsStore {
-  static final ValueNotifier<bool> wifiOnly = ValueNotifier<bool>(false);
-
-  static Future<void> load() async {
-    final prefs = await SharedPreferences.getInstance();
-    wifiOnly.value = prefs.getBool('wifi_only') ?? false;
-  }
-
-  static Future<void> setWifiOnly(bool value) async {
-    wifiOnly.value = value;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('wifi_only', value);
-  }
-}
-
-/// وقتی کاربر از اپ دیگری (مثل مرورگر یا تلگرام) یک لینک را با «اشتراک‌گذاری»
-/// به این برنامه می‌فرستد، سمت نیتیو آن را از طریق MethodChannel به اینجا
-/// می‌فرستد و این کلاس آن را به رابط کاربری اعلام می‌کند.
-class SharedLinkBus {
-  static final ValueNotifier<String?> pending = ValueNotifier<String?>(null);
-
-  static Future<void> init() async {
-    _storageChannel.setMethodCallHandler((call) async {
-      if (call.method == 'onSharedText') {
-        final text = call.arguments as String?;
-        if (text != null && text.trim().isNotEmpty) {
-          pending.value = text.trim();
-        }
-      }
-      return null;
-    });
-    try {
-      final initial =
-          await _storageChannel.invokeMethod<String>('getSharedText');
-      if (initial != null && initial.trim().isNotEmpty) {
-        pending.value = initial.trim();
-      }
-    } catch (_) {}
-  }
-}
-
-class DownloadService {
-  static final yt.YoutubeExplode _youtube = yt.YoutubeExplode();
-
-  static final Dio _dio = Dio(
-    BaseOptions(
-      connectTimeout: Duration(seconds: 20),
-      receiveTimeout: Duration(minutes: 30),
-      sendTimeout: Duration(seconds: 30),
-      followRedirects: true,
-      maxRedirects: 8,
-      validateStatus: (status) => status != null && status >= 200 && status < 400,
-    ),
-  );
-
-  static Future<String> _cacheDirectory() async {
-    final path = await _storageChannel.invokeMethod<String>('getCacheDirectory');
-    if (path == null || path.isEmpty) {
-      throw Exception('مسیر موقت برنامه پیدا نشد.');
-    }
-    return path;
-  }
-
-  static Future<String> _saveToDownloads({
-    required String sourcePath,
-    required String fileName,
-    required String mimeType,
-  }) async {
-    final result = await _storageChannel.invokeMethod<String>(
-      'saveToDownloads',
-      {
-        'sourcePath': sourcePath,
-        'fileName': fileName,
-        'mimeType': mimeType,
-      },
-    );
-    if (result == null || result.isEmpty) {
-      throw Exception('ذخیره فایل در Downloads ناموفق بود.');
-    }
-    return result;
-  }
-
-  static String sanitizeFileName(String value) {
-    var name = value.trim().replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
-    name = name.replaceAll(RegExp(r'\s+'), ' ');
-    if (name.isEmpty) name = 'Floating_Download';
-    if (name.length > 90) name = name.substring(0, 90);
-    return name;
-  }
-
-  static String extensionFromUrl(String url) {
-    final path = Uri.tryParse(url)?.path.toLowerCase() ?? '';
-    final match = RegExp(r'\.([a-z0-9]{2,5})$').firstMatch(path);
-    return match == null ? '' : '.${match.group(1)}';
-  }
-
-  static String mimeFromExtension(String ext) {
-    switch (ext.toLowerCase()) {
-      case '.mp4':
-        return 'video/mp4';
-      case '.webm':
-        return 'video/webm';
-      case '.mkv':
-        return 'video/x-matroska';
-      case '.mov':
-        return 'video/quicktime';
-      case '.mp3':
-        return 'audio/mpeg';
-      case '.m4a':
-        return 'audio/mp4';
-      case '.wav':
-        return 'audio/wav';
-      case '.pdf':
-        return 'application/pdf';
-      case '.zip':
-        return 'application/zip';
-      default:
-        return 'application/octet-stream';
-    }
-  }
-
-  static String fileNameFromUrl(String url) {
-    final uri = Uri.tryParse(url);
-    final last = uri?.pathSegments.isNotEmpty == true
-        ? uri!.pathSegments.last
-        : '';
-    final decoded = Uri.decodeComponent(last);
-    if (decoded.isNotEmpty && decoded.contains('.')) {
-      return sanitizeFileName(decoded);
-    }
-    final ext = extensionFromUrl(url);
-    return 'Floating_${DateTime.now().millisecondsSinceEpoch}$ext';
-  }
-
-  static bool isHls(String url) {
-    final lower = url.toLowerCase();
-    return lower.contains('.m3u8') || lower.contains('application/vnd.apple.mpegurl');
-  }
-
-  static bool looksLikeMedia(String url) {
-    final lower = url.toLowerCase();
-    return RegExp(r'\.(mp4|webm|mkv|mov|mp3|m4a|wav)(\?|#|$)').hasMatch(lower) ||
-        lower.contains('videoplayback') ||
-        lower.contains('mime=video') ||
-        lower.contains('mime=audio') ||
-        isHls(lower);
-  }
-
-  /// بررسی چند بایت اول فایل (Magic Number) برای انواع پرکاربرد رسانه.
-  /// اگر نوع فایل ناشناخته بود یا شناسه نداشت (مثلاً zip/pdf/غیره)، به‌جای
-  /// رد کردن، به‌صورت محافظه‌کارانه قبول می‌شود؛ فقط جلوی «ویدیو/صدا/عکس جعلی
-  /// که در واقع HTML یا متن است» گرفته می‌شود.
-  static Future<bool> _looksLikeValidFile(File file, String mimeType) async {
-    final raf = await file.open();
-    try {
-      final header = await raf.read(16);
-      if (header.length < 4) return true;
-      bool startsWithAscii(String s) {
-        final bytes = s.codeUnits;
-        if (header.length < bytes.length) return false;
-        for (var i = 0; i < bytes.length; i++) {
-          if (header[i] != bytes[i]) return false;
-        }
-        return true;
-      }
-
-      final looksLikeHtmlOrText = startsWithAscii('<htm') ||
-          startsWithAscii('<!DO') ||
-          startsWithAscii('<HTM') ||
-          startsWithAscii('<?xm') ||
-          startsWithAscii('{') ||
-          startsWithAscii('[');
-
-      // برای video/audio/image فقط بررسی می‌کنیم که فایل با یک صفحه
-      // HTML/JSON/متنی شروع نشده باشد (رایج‌ترین حالت دانلود فیک).
-      // امضای دقیق هر فرمت رسانه چک نمی‌شود چون فرمت‌های واقعی معتبر
-      // زیادند و هدف فقط رد کردن پاسخ‌های غیر-رسانه‌ای است.
-      if (looksLikeHtmlOrText) return false;
-      return true;
-    } finally {
-      await raf.close();
-    }
-  }
-
-  static Future<bool> isWifiConnected() async {
-    try {
-      return await _storageChannel.invokeMethod<bool>('isWifiConnected') ??
-          true;
-    } catch (_) {
-      return true;
-    }
-  }
-
-  static Future<String?> openFile(String uri, String mimeType) async {
-    try {
-      return await _storageChannel.invokeMethod<String>(
-        'openFile',
-        {'uri': uri, 'mimeType': mimeType},
-      );
-    } catch (e) {
-      return e.toString();
-    }
-  }
-
-  static Future<void> shareFile(String uri, String mimeType) async {
-    try {
-      await _storageChannel.invokeMethod('shareFile', {
-        'uri': uri,
-        'mimeType': mimeType,
-      });
-    } catch (_) {}
-  }
-
-  static Future<void> deleteFile(String uri) async {
-    try {
-      await _storageChannel.invokeMethod('deleteFile', {'uri': uri});
-    } catch (_) {}
-  }
-
-  static Future<DownloadItem> downloadStream({
-    required yt.StreamInfo streamInfo,
-    required String title,
-    void Function(double progress)? onProgress,
-  }) async {
-    if (SettingsStore.wifiOnly.value) {
-      final wifi = await isWifiConnected();
-      if (!wifi) {
-        throw Exception(
-          'طبق تنظیمات شما، دانلود فقط با Wi-Fi انجام می‌شود. به Wi-Fi وصل شوید یا این گزینه را در تنظیمات خاموش کنید.',
-        );
-      }
-    }
-
-    final id = DateTime.now().microsecondsSinceEpoch.toString();
-    final isAudio = streamInfo is yt.AudioOnlyStreamInfo;
-    final container = streamInfo.container.name.toLowerCase();
-    final ext = container == 'webm' ? '.webm' : (isAudio ? '.m4a' : '.mp4');
-    final mime = container == 'webm'
-        ? (isAudio ? 'audio/webm' : 'video/webm')
-        : (isAudio ? 'audio/mp4' : 'video/mp4');
-    final suffix = isAudio ? 'audio' : streamInfo.qualityLabel;
-    final fileName = '${sanitizeFileName(title)}_$suffix$ext';
-    final cacheDir = await _cacheDirectory();
-    final tempPath = '$cacheDir${Platform.pathSeparator}$id.part';
-
-    DownloadStore.instance.start(id, fileName);
-    try {
-      final file = File(tempPath);
-      final sink = file.openWrite();
-      var received = 0;
-      final total = streamInfo.size.totalBytes;
-
-      final stream = _youtube.streamsClient.get(streamInfo);
-      await for (final chunk in stream) {
-        received += chunk.length;
-        sink.add(chunk);
-        if (total > 0) {
-          final value = received / total;
-          DownloadStore.instance.progress(id, value);
-          onProgress?.call(value.clamp(0.0, 1.0));
-        }
-      }
-      await sink.flush();
-      await sink.close();
-
-      if (!await file.exists() || await file.length() == 0) {
-        throw Exception('استریم یوتیوب خالی یا ناقص بود.');
-      }
-
-      final savedUri = await _saveToDownloads(
-        sourcePath: tempPath,
-        fileName: fileName,
-        mimeType: mime,
-      );
-      final bytes = await file.length();
-      try {
-        await file.delete();
-      } catch (_) {}
-
-      final item = DownloadItem(
-        id: id,
-        name: fileName,
-        url: streamInfo.url.toString(),
-        savedUri: savedUri,
-        date: DateTime.now().toIso8601String(),
-        bytes: bytes,
-        mimeType: mime,
-      );
-      await DownloadStore.instance.add(item);
-      DownloadStore.instance.finish(id);
-      return item;
-    } catch (error) {
-      DownloadStore.instance.fail(id);
-      try {
-        await File(tempPath).delete();
-      } catch (_) {}
-      rethrow;
-    }
-  }
-
-  static Future<DownloadItem> download({
-    required String url,
-    String? preferredName,
-    Map<String, String>? headers,
-    void Function(double progress)? onProgress,
-  }) async {
-    if (SettingsStore.wifiOnly.value) {
-      final wifi = await isWifiConnected();
-      if (!wifi) {
-        throw Exception(
-          'طبق تنظیمات شما، دانلود فقط با Wi-Fi انجام می‌شود. به Wi-Fi وصل شوید یا این گزینه را در تنظیمات خاموش کنید.',
-        );
-      }
-    }
-    final cleanUrl = url.trim();
-    final parsed = Uri.tryParse(cleanUrl);
-    if (parsed == null || !parsed.hasScheme || !parsed.hasAuthority) {
-      throw Exception('لینک وارد شده معتبر نیست.');
-    }
-    if (parsed.scheme != 'http' && parsed.scheme != 'https') {
-      throw Exception('فقط لینک‌های HTTP/HTTPS پشتیبانی می‌شوند.');
-    }
-    if (isHls(cleanUrl)) {
-      throw Exception(
-        'این لینک HLS است. فایل .m3u8 مستقیماً MP4 نیست و برای تبدیل به MP4 به پردازش جداگانه نیاز دارد.',
-      );
-    }
-
-    final id = DateTime.now().microsecondsSinceEpoch.toString();
-    final baseName = sanitizeFileName(
-      preferredName?.trim().isNotEmpty == true
-          ? preferredName!.trim()
-          : fileNameFromUrl(cleanUrl),
-    );
-    final ext = extensionFromUrl(cleanUrl);
-    final fileName = baseName.toLowerCase().endsWith(ext.toLowerCase()) ||
-            ext.isEmpty
-        ? baseName
-        : '$baseName$ext';
-    final mimeType = mimeFromExtension(extensionFromUrl(fileName));
-    final cacheDir = await _cacheDirectory();
-    final tempPath = '$cacheDir${Platform.pathSeparator}$id.part';
-
-    DownloadStore.instance.start(id, fileName);
-
-    try {
-      final response = await _dio.download(
-        cleanUrl,
-        tempPath,
-        options: Options(
-          headers: {
-            'Accept': '*/*',
-            'User-Agent': _browserUserAgent,
-            ...?headers,
-          },
-        ),
-        deleteOnError: true,
-        onReceiveProgress: (received, total) {
-          if (total > 0) {
-            final value = received / total;
-            DownloadStore.instance.progress(id, value);
-            onProgress?.call(value);
-          }
-        },
-      );
-
-      final status = response.statusCode ?? 0;
-      if (status < 200 || status >= 400) {
-        throw Exception('سرور کد HTTP $status برگرداند.');
-      }
-
-      final file = File(tempPath);
-      if (!await file.exists() || await file.length() == 0) {
-        throw Exception('فایل دانلودشده خالی یا ناقص است.');
-      }
-
-      // اعتبارسنجی واقعی بودن فایل: خیلی از سرورها به‌جای فایل رسانه‌ای،
-      // یک صفحه HTML خطا/لاگین با کد 200 برمی‌گردانند. بدون این بررسی،
-      // آن صفحه به اشتباه به‌عنوان "دانلود موفق" ذخیره می‌شد ولی در واقع
-      // فایل واقعی نبود (همان دانلود فیک).
-      final expectsMedia = mimeType.startsWith('video/') ||
-          mimeType.startsWith('audio/') ||
-          mimeType.startsWith('image/');
-      final responseContentType =
-          (response.headers.value('content-type') ?? '').toLowerCase();
-      if (expectsMedia &&
-          (responseContentType.contains('text/html') ||
-              responseContentType.contains('text/plain') ||
-              responseContentType.contains('application/json'))) {
-        throw Exception(
-          'سرور به‌جای فایل رسانه‌ای یک صفحه متنی/HTML برگرداند (معمولاً یعنی لینک نیاز به ورود، Referer یا کوکی معتبر دارد).',
-        );
-      }
-      if (!await _looksLikeValidFile(file, mimeType)) {
-        throw Exception(
-          'فایل دریافتی با نوع «$mimeType» مطابقت ندارد و احتمالاً واقعی نیست. لینک مستقیم فایل را بررسی کنید.',
-        );
-      }
-
-      final savedUri = await _saveToDownloads(
-        sourcePath: tempPath,
-        fileName: fileName,
-        mimeType: mimeType,
-      );
-      final bytes = await file.length();
-      try { await file.delete(); } catch (_) {}
-
-      final item = DownloadItem(
-        id: id,
-        name: fileName,
-        url: cleanUrl,
-        savedUri: savedUri,
-        date: DateTime.now().toIso8601String(),
-        bytes: bytes,
-        mimeType: mimeType,
-      );
-      await DownloadStore.instance.add(item);
-      DownloadStore.instance.finish(id);
-      return item;
-    } catch (error) {
-      DownloadStore.instance.fail(id);
-      try { await File(tempPath).delete(); } catch (_) {}
-      rethrow;
-    }
   }
 }
 
@@ -803,421 +229,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           ),
         ],
       ),
-    );
-  }
-}
-
-/// یک فرمت/کیفیت قابل‌دانلود از یک رسانه (مثلاً «۷۲۰p» یا «۱۲۸kbps»).
-class MediaFormat {
-  final String label;
-  final String url;
-  final String mimeType;
-  final String ext;
-  /// For YouTube this contains the real StreamInfo so we don't lose the
-  /// signed URL/stream metadata between analysis and download.
-  final Object? streamData;
-
-  const MediaFormat({
-    required this.label,
-    required this.url,
-    required this.mimeType,
-    required this.ext,
-    this.streamData,
-  });
-}
-
-/// نتیجه‌ی استخراج یک لینک از یک پلتفرم: عنوان، صاحب محتوا، کاور، و
-/// فرمت‌های قابل‌دانلود (اگر پلتفرم اجازه بده).
-class MediaInfo {
-  final String title;
-  final String? author;
-  final String? thumbnailUrl;
-  final List<MediaFormat> formats;
-  final String sourceUrl;
-  final String referer;
-
-  const MediaInfo({
-    required this.title,
-    this.author,
-    this.thumbnailUrl,
-    required this.formats,
-    required this.sourceUrl,
-    required this.referer,
-  });
-}
-
-class PlatformExtractorException implements Exception {
-  final String message;
-  const PlatformExtractorException(this.message);
-  @override
-  String toString() => message;
-}
-
-/// استخراج‌کننده‌ی مخصوص هر پلتفرم. هر متد کاملاً مستقل از بقیه است تا
-/// تغییر/خرابی یک سایت روی بقیه اثر نذاره.
-class PlatformExtractor {
-  static final Dio _http = Dio(
-    BaseOptions(
-      connectTimeout: Duration(seconds: 15),
-      receiveTimeout: Duration(seconds: 20),
-      headers: {
-        'User-Agent': _browserUserAgent,
-        'Accept': 'text/html,application/json,*/*',
-      },
-      validateStatus: (s) => s != null && s < 500,
-    ),
-  );
-
-  static String? _metaTag(String html, String property) {
-    final re = RegExp(
-      '<meta[^>]+property=["\']$property["\'][^>]+content=["\']([^"\']*)["\']',
-      caseSensitive: false,
-    );
-    var m = re.firstMatch(html);
-    if (m == null) {
-      // بعضی صفحات ترتیب content/property را برعکس می‌نویسند.
-      final re2 = RegExp(
-        '<meta[^>]+content=["\']([^"\']*)["\'][^>]+property=["\']$property["\']',
-        caseSensitive: false,
-      );
-      m = re2.firstMatch(html);
-    }
-    if (m == null) return null;
-    return m
-        .group(1)
-        ?.replaceAll('&amp;', '&')
-        .replaceAll('&quot;', '"')
-        .replaceAll('&#039;', "'");
-  }
-
-  // ---------------------------------------------------------------------
-  // یوتیوب — متادیتا + کیفیت‌های واقعی StreamManifest
-  // ---------------------------------------------------------------------
-  static final yt.YoutubeExplode _youtube = yt.YoutubeExplode();
-
-  static String _streamSize(int bytes) {
-    if (bytes <= 0) return 'حجم نامشخص';
-    final mb = bytes / (1024 * 1024);
-    if (mb < 1024) return '${mb.toStringAsFixed(1)} MB';
-    return '${(mb / 1024).toStringAsFixed(2)} GB';
-  }
-
-  static int _qualityRank(String label) {
-    final m = RegExp(r'(\d{3,4})p').firstMatch(label);
-    return int.tryParse(m?.group(1) ?? '') ?? 0;
-  }
-
-  static Future<MediaInfo> youtubeMeta(String url) async {
-    try {
-      final video = await _youtube.videos.get(url);
-      final manifest = await _youtube.videos.streamsClient.getManifest(
-        video.id,
-        fullManifest: true,
-      );
-
-      final formats = <MediaFormat>[];
-
-      // Muxed streams are the safest one-file YouTube downloads because they
-      // already contain both audio and video. Higher qualities on YouTube are
-      // commonly video-only and require a separate mux/remux step.
-      final muxed = manifest.muxed.toList()
-        ..sort((a, b) => _qualityRank(b.qualityLabel)
-            .compareTo(_qualityRank(a.qualityLabel)));
-
-      final seenVideo = <String>{};
-      for (final stream in muxed) {
-        final quality = stream.qualityLabel;
-        if (!seenVideo.add(quality)) continue;
-        final ext = stream.container.name.toLowerCase() == 'webm'
-            ? '.webm'
-            : '.mp4';
-        final mime = ext == '.webm' ? 'video/webm' : 'video/mp4';
-        formats.add(
-          MediaFormat(
-            label: 'ویدیو $quality • ${_streamSize(stream.size.totalBytes)}',
-            url: stream.url.toString(),
-            mimeType: mime,
-            ext: ext,
-            streamData: stream,
-          ),
-        );
-      }
-
-      final audio = manifest.audioOnly.toList()
-        ..sort((a, b) => b.bitrate.kiloBitsPerSecond
-            .compareTo(a.bitrate.kiloBitsPerSecond));
-
-      final seenAudio = <int>{};
-      for (final stream in audio) {
-        final kbps = stream.bitrate.kiloBitsPerSecond;
-        if (!seenAudio.add(kbps)) continue;
-        final ext = stream.container.name.toLowerCase() == 'webm'
-            ? '.webm'
-            : '.m4a';
-        final mime = ext == '.webm' ? 'audio/webm' : 'audio/mp4';
-        formats.add(
-          MediaFormat(
-            label: 'صوت AAC ${kbps} kbps • ${_streamSize(stream.size.totalBytes)}',
-            url: stream.url.toString(),
-            mimeType: mime,
-            ext: ext,
-            streamData: stream,
-          ),
-        );
-      }
-
-      if (formats.isEmpty) {
-        throw PlatformExtractorException(
-          'برای این ویدیوی یوتیوب هیچ استریم قابل دانلودی پیدا نشد.',
-        );
-      }
-
-      return MediaInfo(
-        title: video.title,
-        author: video.author,
-        thumbnailUrl: video.thumbnails.highResUrl,
-        formats: formats,
-        sourceUrl: url,
-        referer: url,
-      );
-    } catch (e) {
-      if (e is PlatformExtractorException) rethrow;
-      throw PlatformExtractorException(
-        'استخراج یوتیوب ناموفق بود. ممکن است ویدیو خصوصی، محدود یا ساختار YouTube تغییر کرده باشد.\n$e',
-      );
-    }
-  }
-
-  // ---------------------------------------------------------------------
-  // اسپاتیفای — فقط متادیتا (فایل صوتی رمزگذاری‌شده و غیرقابل‌استخراج است)
-  // ---------------------------------------------------------------------
-  static Future<MediaInfo> spotifyMeta(String url) async {
-    final resp = await _http.get(
-      'https://open.spotify.com/oembed',
-      queryParameters: {'url': url},
-    );
-    if (resp.statusCode != 200 || resp.data is! Map) {
-      throw PlatformExtractorException(
-        'اطلاعات این آیتم اسپاتیفای پیدا نشد. لینک را بررسی کنید.',
-      );
-    }
-    final data = resp.data as Map;
-    return MediaInfo(
-      title: (data['title'] ?? 'آیتم اسپاتیفای').toString(),
-      author: data['provider_name']?.toString(),
-      thumbnailUrl: data['thumbnail_url']?.toString(),
-      formats: const [],
-      sourceUrl: url,
-      referer: url,
-    );
-  }
-
-  // ---------------------------------------------------------------------
-  // اینستاگرام — از تگ‌های og:video / og:image صفحه‌ی عمومی پست
-  // ---------------------------------------------------------------------
-  static Future<MediaInfo> instagram(String url) async {
-    final resp = await _http.get(url);
-    if (resp.statusCode != 200 || resp.data is! String) {
-      throw PlatformExtractorException(
-        'صفحه‌ی اینستاگرام بارگذاری نشد. ممکن است پست خصوصی باشد یا لینک اشتباه باشد.',
-      );
-    }
-    final html = resp.data as String;
-    final title = _metaTag(html, 'og:title') ?? 'پست اینستاگرام';
-    final videoUrl = _metaTag(html, 'og:video');
-    final imageUrl = _metaTag(html, 'og:image');
-
-    if (videoUrl == null && imageUrl == null) {
-      throw PlatformExtractorException(
-        'رسانه‌ای در این پست پیدا نشد. اگر پست خصوصی یا استوری است، اینستاگرام اجازه‌ی دسترسی عمومی نمی‌دهد.',
-      );
-    }
-
-    final formats = <MediaFormat>[
-      if (videoUrl != null)
-        MediaFormat(
-          label: 'ویدیو (کیفیت اصلی)',
-          url: videoUrl,
-          mimeType: 'video/mp4',
-          ext: '.mp4',
-        ),
-      if (imageUrl != null)
-        MediaFormat(
-          label: videoUrl != null ? 'کاور/تصویر' : 'تصویر (کیفیت اصلی)',
-          url: imageUrl,
-          mimeType: 'image/jpeg',
-          ext: '.jpg',
-        ),
-    ];
-
-    return MediaInfo(
-      title: title,
-      author: null,
-      thumbnailUrl: imageUrl,
-      formats: formats,
-      sourceUrl: url,
-      referer: 'https://www.instagram.com/',
-    );
-  }
-
-  // ---------------------------------------------------------------------
-  // تیک‌تاک — ابتدا از JSON داخل صفحه، در صورت شکست از og:video
-  // ---------------------------------------------------------------------
-  static Future<MediaInfo> tiktok(String url) async {
-    final resp = await _http.get(url);
-    if (resp.statusCode != 200 || resp.data is! String) {
-      throw PlatformExtractorException('صفحه‌ی تیک‌تاک بارگذاری نشد.');
-    }
-    final html = resp.data as String;
-
-    String? videoUrl;
-    String? coverUrl;
-    String? title;
-    String? author;
-
-    try {
-      final scriptMatch = RegExp(
-        r'<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>(.*?)</script>',
-        dotAll: true,
-      ).firstMatch(html);
-      if (scriptMatch != null) {
-        final jsonStr = scriptMatch.group(1)!;
-        final data = jsonDecode(jsonStr) as Map;
-        final scope = data['__DEFAULT_SCOPE__'] as Map?;
-        final detail = scope?['webapp.video-detail'] as Map?;
-        final itemStruct = detail?['itemInfo']?['itemStruct'] as Map?;
-        if (itemStruct != null) {
-          final video = itemStruct['video'] as Map?;
-          title = itemStruct['desc']?.toString();
-          author = itemStruct['author']?['uniqueId']?.toString();
-          coverUrl = video?['cover']?.toString() ?? video?['originCover']?.toString();
-          final playAddr = video?['playAddr']?.toString();
-          final downloadAddr = video?['downloadAddr']?.toString();
-          videoUrl = (downloadAddr != null && downloadAddr.isNotEmpty)
-              ? downloadAddr
-              : playAddr;
-        }
-      }
-    } catch (_) {
-      // به روش پشتیبان زیر می‌رویم
-    }
-
-    videoUrl ??= _metaTag(html, 'og:video') ?? _metaTag(html, 'og:video:url');
-    coverUrl ??= _metaTag(html, 'og:image');
-    title ??= _metaTag(html, 'og:title') ?? 'ویدیوی تیک‌تاک';
-
-    if (videoUrl == null || videoUrl.isEmpty) {
-      throw PlatformExtractorException(
-        'لینک ویدیوی واقعی پیدا نشد. تیک‌تاک مدام ساختار صفحه‌اش را تغییر می‌دهد — این لاگ را برای بررسی بفرستید.',
-      );
-    }
-
-    return MediaInfo(
-      title: title,
-      author: author,
-      thumbnailUrl: coverUrl,
-      formats: [
-        MediaFormat(
-          label: 'ویدیو (بدون واترمارک در صورت وجود)',
-          url: videoUrl,
-          mimeType: 'video/mp4',
-          ext: '.mp4',
-        ),
-      ],
-      sourceUrl: url,
-      referer: 'https://www.tiktok.com/',
-    );
-  }
-
-  // ---------------------------------------------------------------------
-  // ساندکلاود — گرفتن client_id عمومی از باندل جاوااسکریپت، سپس resolve
-  // ---------------------------------------------------------------------
-  static String? _cachedSoundCloudClientId;
-
-  static Future<String> _soundCloudClientId() async {
-    if (_cachedSoundCloudClientId != null) return _cachedSoundCloudClientId!;
-    final home = await _http.get('https://soundcloud.com');
-    if (home.statusCode != 200 || home.data is! String) {
-      throw PlatformExtractorException('اتصال به SoundCloud ممکن نشد.');
-    }
-    final html = home.data as String;
-    final scriptUrls = RegExp(r'src="(https://a-v2\.sndcdn\.com/assets/[^"]+\.js)"')
-        .allMatches(html)
-        .map((m) => m.group(1)!)
-        .toList();
-
-    for (final scriptUrl in scriptUrls.reversed) {
-      try {
-        final js = await _http.get(scriptUrl);
-        if (js.statusCode != 200 || js.data is! String) continue;
-        final jsText = js.data as String;
-        final m = RegExp(r'client_id\s*[:=]\s*"([a-zA-Z0-9]{16,})"').firstMatch(jsText);
-        if (m != null) {
-          _cachedSoundCloudClientId = m.group(1);
-          return _cachedSoundCloudClientId!;
-        }
-      } catch (_) {
-        continue;
-      }
-    }
-    throw PlatformExtractorException(
-      'پیدا کردن شناسه‌ی دسترسی SoundCloud ممکن نشد. ممکن است ساختار سایت تغییر کرده باشد.',
-    );
-  }
-
-  static Future<MediaInfo> soundcloud(String url) async {
-    final clientId = await _soundCloudClientId();
-    final resolve = await _http.get(
-      'https://api-v2.soundcloud.com/resolve',
-      queryParameters: {'url': url, 'client_id': clientId},
-    );
-    if (resolve.statusCode != 200 || resolve.data is! Map) {
-      throw PlatformExtractorException(
-        'این لینک SoundCloud پیدا نشد یا خصوصی/حذف‌شده است.',
-      );
-    }
-    final track = resolve.data as Map;
-    final title = track['title']?.toString() ?? 'آهنگ SoundCloud';
-    final author = track['user']?['username']?.toString();
-    final artwork = (track['artwork_url'] ?? track['user']?['avatar_url'])
-        ?.toString()
-        .replaceAll('-large.', '-t500x500.');
-
-    final transcodings = (track['media']?['transcodings'] as List?) ?? [];
-    final progressive = transcodings.firstWhere(
-      (t) => (t['format']?['protocol'] == 'progressive'),
-      orElse: () => null,
-    );
-
-    if (progressive == null) {
-      throw PlatformExtractorException(
-        'این آهنگ فقط به‌صورت استریم HLS ارائه شده و امکان دانلود مستقیم آن نیست.',
-      );
-    }
-
-    final streamInfo = await _http.get(
-      progressive['url'].toString(),
-      queryParameters: {'client_id': clientId},
-    );
-    final streamUrl = (streamInfo.data is Map) ? streamInfo.data['url']?.toString() : null;
-    if (streamUrl == null || streamUrl.isEmpty) {
-      throw PlatformExtractorException('گرفتن لینک نهایی فایل صوتی ناموفق بود.');
-    }
-
-    return MediaInfo(
-      title: title,
-      author: author,
-      thumbnailUrl: artwork,
-      formats: [
-        MediaFormat(
-          label: 'MP3 (کیفیت استاندارد)',
-          url: streamUrl,
-          mimeType: 'audio/mpeg',
-          ext: '.mp3',
-        ),
-      ],
-      sourceUrl: url,
-      referer: 'https://soundcloud.com/',
     );
   }
 }
@@ -1525,7 +536,12 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
   final urlController = TextEditingController();
   bool overlayActive = false;
   bool downloading = false;
+  bool analyzing = false;
   String? clipboardSuggestion;
+  MediaInfo? analyzedInfo;
+  _PlatformDef? analyzedPlatform;
+  String? analyzeError;
+  final Set<String> downloadingFormats = {};
 
   @override
   void initState() {
@@ -1624,12 +640,82 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
     }
   }
 
+  /// تحلیل واقعی لینک: تشخیص پلتفرم، گرفتن عنوان/کاور/کیفیت‌های واقعی.
+  /// این همان چیزی است که جلوی «دانلود فیک» صفحات یوتیوب/اینستاگرام و
+  /// مشابه را می‌گیرد؛ هیچ داده‌ای نمایشی یا ساختگی نیست.
+  Future<void> _analyzeLink(String url) async {
+    setState(() {
+      analyzing = true;
+      analyzeError = null;
+      analyzedInfo = null;
+      analyzedPlatform = null;
+    });
+    try {
+      final platform = detectPlatform(url);
+      if (platform == null) {
+        throw PlatformExtractorException(
+          'این لینک متعلق به هیچ‌کدام از پلتفرم‌های پشتیبانی‌شده (یوتیوب، اینستاگرام، تیک‌تاک، ساندکلاود، اسپاتیفای) نیست.',
+        );
+      }
+      final info = await platform.fetch(url);
+      if (!mounted) return;
+      setState(() {
+        analyzedInfo = info;
+        analyzedPlatform = platform;
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(
+          () => analyzeError = e.toString().replaceFirst('Exception: ', ''),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => analyzing = false);
+    }
+  }
+
+  void _clearAnalysis() {
+    setState(() {
+      analyzedInfo = null;
+      analyzedPlatform = null;
+      analyzeError = null;
+    });
+  }
+
+  Future<void> _downloadAnalyzedFormat(MediaFormat format) async {
+    if (!await DownloadGateService.ensureUnlocked(context)) return;
+    setState(() => downloadingFormats.add(format.url));
+    try {
+      await DownloadService.download(
+        url: format.url,
+        preferredName: analyzedInfo?.title,
+        headers: {'Referer': analyzedInfo?.referer ?? ''},
+      );
+      if (mounted) {
+        _message('✓ دانلود کامل شد و در Downloads ذخیره شد.');
+        await DownloadGateService.registerSuccessAndMaybeGate(context);
+      }
+    } catch (e) {
+      if (mounted) _message(_friendlyError(e));
+    } finally {
+      if (mounted) setState(() => downloadingFormats.remove(format.url));
+    }
+  }
+
   Future<void> _download() async {
     final url = urlController.text.trim();
     if (url.isEmpty) {
       _message('اول لینک فایل را وارد کنید.');
       return;
     }
+
+    // اگر لینک متعلق به یکی از پلتفرم‌های پشتیبانی‌شده باشد، به‌جای دانلود
+    // خام صفحه (که باعث فایل جعلی می‌شد)، تحلیل واقعی انجام می‌شود.
+    if (detectPlatform(url) != null) {
+      await _analyzeLink(url);
+      return;
+    }
+
     if (!await DownloadGateService.ensureUnlocked(context)) return;
     setState(() => downloading = true);
     try {
@@ -1669,30 +755,15 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
               child: _Header(
                 title: 'Floating Downloader',
                 subtitle: 'سریع، تمیز و بدون مسیرهای جعلی',
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(
-                      onPressed: ThemeStore.toggle,
-                      tooltip: ThemeStore.isDark.value ? 'تم روشن' : 'تم تاریک',
-                      icon: Icon(
-                        ThemeStore.isDark.value
-                            ? Icons.light_mode_rounded
-                            : Icons.dark_mode_rounded,
-                        color: _muted,
-                      ),
-                    ),
-                    IconButton(
-                      onPressed: _toggleOverlay,
-                      tooltip: 'پنجره شناور',
-                      icon: Icon(
-                        overlayActive
-                            ? Icons.bubble_chart_rounded
-                            : Icons.bubble_chart_outlined,
-                        color: overlayActive ? _cyan : _muted,
-                      ),
-                    ),
-                  ],
+                trailing: IconButton(
+                  onPressed: _toggleOverlay,
+                  tooltip: 'پنجره شناور',
+                  icon: Icon(
+                    overlayActive
+                        ? Icons.bubble_chart_rounded
+                        : Icons.bubble_chart_outlined,
+                    color: overlayActive ? _cyan : _muted,
+                  ),
                 ),
               ),
             ),
@@ -1713,12 +784,61 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
             sliver: SliverToBoxAdapter(
               child: _HeroCard(
                 controller: urlController,
-                loading: downloading,
+                loading: downloading || analyzing,
                 onPaste: _paste,
                 onDownload: _download,
               ),
             ),
           ),
+          if (analyzeError != null)
+            SliverPadding(
+              padding: EdgeInsets.fromLTRB(20, 0, 20, 20),
+              sliver: SliverToBoxAdapter(
+                child: Container(
+                  padding: EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: _danger.withOpacity(.10),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: _danger.withOpacity(.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.error_outline_rounded, color: _danger, size: 18),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          analyzeError!,
+                          style: TextStyle(color: _danger, fontSize: 12),
+                        ),
+                      ),
+                      IconButton(
+                        padding: EdgeInsets.zero,
+                        constraints: BoxConstraints(),
+                        onPressed: _clearAnalysis,
+                        icon: Icon(Icons.close_rounded, size: 16, color: _muted),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          if (analyzedInfo != null && analyzedPlatform != null)
+            SliverPadding(
+              padding: EdgeInsets.fromLTRB(20, 0, 20, 20),
+              sliver: SliverToBoxAdapter(
+                child: _AnalyzedMediaCard(
+                  info: analyzedInfo!,
+                  platform: analyzedPlatform!,
+                  downloadingFormats: downloadingFormats,
+                  onDownloadFormat: _downloadAnalyzedFormat,
+                  onOpenOriginal: () => launchUrl(
+                    Uri.parse(analyzedInfo!.sourceUrl),
+                    mode: LaunchMode.externalApplication,
+                  ),
+                  onClose: _clearAnalysis,
+                ),
+              ),
+            ),
           SliverPadding(
             padding: EdgeInsets.symmetric(horizontal: 20),
             sliver: SliverToBoxAdapter(
@@ -1917,6 +1037,169 @@ class _ClipboardBanner extends StatelessWidget {
   }
 }
 
+class _AnalyzedMediaCard extends StatelessWidget {
+  final MediaInfo info;
+  final _PlatformDef platform;
+  final Set<String> downloadingFormats;
+  final void Function(MediaFormat format) onDownloadFormat;
+  final VoidCallback onOpenOriginal;
+  final VoidCallback onClose;
+
+  const _AnalyzedMediaCard({
+    required this.info,
+    required this.platform,
+    required this.downloadingFormats,
+    required this.onDownloadFormat,
+    required this.onOpenOriginal,
+    required this.onClose,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: _surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: platform.color.withOpacity(.25)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(platform.icon, color: platform.color, size: 16),
+              SizedBox(width: 6),
+              Text(
+                platform.title,
+                style: TextStyle(
+                  color: platform.color,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 11.5,
+                ),
+              ),
+              Spacer(),
+              IconButton(
+                padding: EdgeInsets.zero,
+                constraints: BoxConstraints(),
+                onPressed: onClose,
+                icon: Icon(Icons.close_rounded, size: 17, color: _muted),
+              ),
+            ],
+          ),
+          SizedBox(height: 10),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(14),
+                child: info.thumbnailUrl != null
+                    ? Image.network(
+                        info.thumbnailUrl!,
+                        width: 84,
+                        height: 84,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Container(
+                          width: 84,
+                          height: 84,
+                          color: _surface2,
+                          child: Icon(platform.icon, color: platform.color),
+                        ),
+                      )
+                    : Container(
+                        width: 84,
+                        height: 84,
+                        color: _surface2,
+                        child: Icon(platform.icon, color: platform.color),
+                      ),
+              ),
+              SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      info.title,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13.5),
+                    ),
+                    if (info.author != null) ...[
+                      SizedBox(height: 6),
+                      Text(
+                        info.author!,
+                        style: TextStyle(color: _muted, fontSize: 11.5),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: 14),
+          if (!platform.downloadable) ...[
+            Text(
+              '${platform.title} اجازه‌ی دانلود مستقیم فایل را نمی‌دهد. می‌توانید آن را در اپ اصلی باز کنید.',
+              style: TextStyle(color: _muted, fontSize: 11, height: 1.7),
+            ),
+            SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: onOpenOriginal,
+                icon: Icon(Icons.open_in_new_rounded, size: 18),
+                label: Text('باز کردن در اپ ${platform.title}'),
+              ),
+            ),
+          ] else
+            ...info.formats.map((format) {
+              final isDownloading = downloadingFormats.contains(format.url);
+              return Container(
+                margin: EdgeInsets.only(bottom: 8),
+                padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: _surface2,
+                  borderRadius: BorderRadius.circular(13),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      format.mimeType.startsWith('audio/')
+                          ? Icons.music_note_rounded
+                          : format.mimeType.startsWith('image/')
+                              ? Icons.image_rounded
+                              : Icons.movie_rounded,
+                      color: platform.color,
+                      size: 18,
+                    ),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        format.label,
+                        style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+                      ),
+                    ),
+                    FilledButton(
+                      onPressed: isDownloading ? null : () => onDownloadFormat(format),
+                      style: FilledButton.styleFrom(backgroundColor: platform.color),
+                      child: isDownloading
+                          ? SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            )
+                          : Icon(Icons.download_rounded, size: 17),
+                    ),
+                  ],
+                ),
+              );
+            }),
+        ],
+      ),
+    );
+  }
+}
+
 class _HeroCard extends StatelessWidget {
   final TextEditingController controller;
   final bool loading;
@@ -2069,7 +1352,7 @@ class _StatCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: _surface,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: ThemeStore.isDark.value ? Colors.white.withOpacity(.05) : Colors.black.withOpacity(.06)),
+        border: Border.all(color: Colors.white.withOpacity(.05)),
       ),
       child: Row(
         children: [
@@ -2135,7 +1418,7 @@ class _QuickCard extends StatelessWidget {
           padding: EdgeInsets.all(15),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(21),
-            border: Border.all(color: ThemeStore.isDark.value ? Colors.white.withOpacity(.05) : Colors.black.withOpacity(.06)),
+            border: Border.all(color: Colors.white.withOpacity(.05)),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -2169,9 +1452,6 @@ class BrowserTab extends StatefulWidget {
   @override
   State<BrowserTab> createState() => _BrowserTabState();
 }
-
-final _browserUserAgent =
-    'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/131 Mobile Safari/537.36';
 
 class _DetectedMedia {
   final String url;
@@ -2424,7 +1704,7 @@ class _BrowserTabState extends State<BrowserTab> {
                   useOnDownloadStart: true,
                   thirdPartyCookiesEnabled: true,
                   transparentBackground: true,
-                  userAgent: _browserUserAgent,
+                  userAgent: browserUserAgent,
                 ),
                 onWebViewCreated: (controller) => webView = controller,
                 onLoadStart: (controller, url) {
@@ -2499,6 +1779,7 @@ class _PlatformDef {
   final Color color;
   final String hint;
   final bool downloadable;
+  final List<String> hosts;
   final Future<MediaInfo> Function(String url) fetch;
 
   const _PlatformDef({
@@ -2509,6 +1790,7 @@ class _PlatformDef {
     required this.color,
     required this.hint,
     required this.downloadable,
+    required this.hosts,
     required this.fetch,
   });
 }
@@ -2522,6 +1804,7 @@ final List<_PlatformDef> _platformDefs = [
     color: Color(0xFFE1306C),
     hint: 'لینک پست یا ریلز اینستاگرام را بچسبانید',
     downloadable: true,
+    hosts: ['instagram.com'],
     fetch: PlatformExtractor.instagram,
   ),
   _PlatformDef(
@@ -2532,6 +1815,7 @@ final List<_PlatformDef> _platformDefs = [
     color: Color(0xFF25F4EE),
     hint: 'لینک ویدیوی تیک‌تاک را بچسبانید',
     downloadable: true,
+    hosts: ['tiktok.com'],
     fetch: PlatformExtractor.tiktok,
   ),
   _PlatformDef(
@@ -2542,16 +1826,18 @@ final List<_PlatformDef> _platformDefs = [
     color: Color(0xFFFF7700),
     hint: 'لینک آهنگ SoundCloud را بچسبانید',
     downloadable: true,
+    hosts: ['soundcloud.com', 'snd.sc'],
     fetch: PlatformExtractor.soundcloud,
   ),
   _PlatformDef(
     id: 'youtube',
     title: 'یوتیوب',
-    subtitle: 'استخراج عنوان، کاور و کیفیت واقعی',
+    subtitle: 'فقط اطلاعات + باز کردن در اپ',
     icon: Icons.smart_display_rounded,
     color: Color(0xFFFF0000),
     hint: 'لینک ویدیوی یوتیوب را بچسبانید',
-    downloadable: true,
+    downloadable: false,
+    hosts: ['youtube.com', 'youtu.be', 'm.youtube.com'],
     fetch: PlatformExtractor.youtubeMeta,
   ),
   _PlatformDef(
@@ -2562,9 +1848,20 @@ final List<_PlatformDef> _platformDefs = [
     color: Color(0xFF1DB954),
     hint: 'لینک آهنگ/پلی‌لیست اسپاتیفای را بچسبانید',
     downloadable: false,
+    hosts: ['open.spotify.com', 'spotify.com', 'spotify.link'],
     fetch: PlatformExtractor.spotifyMeta,
   ),
 ];
+
+/// تشخیص خودکار اینکه یک لینک مال کدام پلتفرم است (بر اساس دامنه).
+_PlatformDef? detectPlatform(String url) {
+  final host = Uri.tryParse(url)?.host.toLowerCase();
+  if (host == null || host.isEmpty) return null;
+  for (final def in _platformDefs) {
+    if (def.hosts.any((h) => host == h || host.endsWith('.$h'))) return def;
+  }
+  return null;
+}
 
 class PlatformsTab extends StatelessWidget {
   const PlatformsTab({super.key});
@@ -2666,19 +1963,11 @@ class _PlatformDetailScreenState extends State<PlatformDetailScreen> {
     if (!await DownloadGateService.ensureUnlocked(context)) return;
     setState(() => downloadingFormats.add(format.url));
     try {
-      final stream = format.streamData;
-      if (stream is yt.StreamInfo) {
-        await DownloadService.downloadStream(
-          streamInfo: stream,
-          title: info?.title ?? 'YouTube',
-        );
-      } else {
-        await DownloadService.download(
-          url: format.url,
-          preferredName: info?.title,
-          headers: {'Referer': info?.referer ?? widget.def.hint},
-        );
-      }
+      await DownloadService.download(
+        url: format.url,
+        preferredName: info?.title,
+        headers: {'Referer': info?.referer ?? widget.def.hint},
+      );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('✓ دانلود کامل شد و در Downloads ذخیره شد.')),
@@ -3231,7 +2520,7 @@ class _CardShell extends StatelessWidget {
       decoration: BoxDecoration(
         color: _surface,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: ThemeStore.isDark.value ? Colors.white.withOpacity(.05) : Colors.black.withOpacity(.06)),
+        border: Border.all(color: Colors.white.withOpacity(.05)),
       ),
       child: child,
     );
@@ -3262,7 +2551,7 @@ class _SettingsTabState extends State<SettingsTab> {
           _SettingsHeader(
             icon: Icons.settings_suggest_rounded,
             title: 'Floating Downloader',
-            subtitle: 'نسخه 3.3 • Android',
+            subtitle: 'نسخه 3.5 • Android',
           ),
           SizedBox(height: 16),
           _SectionTitle(title: 'ظاهر برنامه'),
@@ -3329,12 +2618,12 @@ class _SettingsTabState extends State<SettingsTab> {
           _SettingTile(
             icon: Icons.info_outline_rounded,
             title: 'درباره برنامه',
-            subtitle: 'نسخه 3.3.0',
+            subtitle: 'نسخه 3.5.0',
             color: _muted,
             onTap: () => showAboutDialog(
               context: context,
               applicationName: 'Floating Downloader',
-              applicationVersion: '3.3.0',
+              applicationVersion: '3.5.0',
               applicationIcon: Icon(Icons.download_rounded, color: _primary),
               children: [
                 Text(
@@ -3372,7 +2661,7 @@ class _SettingsHeader extends StatelessWidget {
       decoration: BoxDecoration(
         color: _surface,
         borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: ThemeStore.isDark.value ? Colors.white.withOpacity(.05) : Colors.black.withOpacity(.06)),
+        border: Border.all(color: Colors.white.withOpacity(.05)),
       ),
       child: Row(
         children: [
