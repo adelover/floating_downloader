@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 
+import '../controllers/download_queue_controller.dart';
 import '../state/app_settings.dart';
 import '../state/download_store.dart';
 import 'native_bridge.dart';
@@ -46,9 +47,18 @@ class DownloadService {
   }
 
   static String sanitizeFileName(String value) {
+    // MediaStore rejects path separators, control characters, and Windows
+    // device names even on newer Android versions.
     var name = value.trim().replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
-    name = name.replaceAll(RegExp(r'\s+'), ' ');
+    name = name.replaceAll(RegExp(r'[\x00-\x1F\x7F]'), '_');
+    name = name.replaceAll(RegExp(r'\s+'), ' ').trim();
+    name = name.replaceAll(RegExp(r'[. ]+$'), '');
     if (name.isEmpty) name = 'Floating_Download';
+    if (RegExp(r'^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$',
+            caseSensitive: false)
+        .hasMatch(name)) {
+      name = '_$name';
+    }
     if (name.length > 90) name = name.substring(0, 90);
     return name;
   }
@@ -89,7 +99,12 @@ class DownloadService {
     final last = uri?.pathSegments.isNotEmpty == true
         ? uri!.pathSegments.last
         : '';
-    final decoded = Uri.decodeComponent(last);
+    String decoded;
+    try {
+      decoded = Uri.decodeComponent(last);
+    } catch (_) {
+      decoded = last;
+    }
     if (decoded.isNotEmpty && decoded.contains('.')) {
       return sanitizeFileName(decoded);
     }
@@ -187,6 +202,25 @@ class DownloadService {
     String? preferredName,
     Map<String, String>? headers,
     void Function(double progress)? onProgress,
+  }) {
+    return DownloadQueueController.instance.enqueue(
+      url: url,
+      preferredName: preferredName,
+      headers: headers,
+      onProgress: onProgress,
+    );
+  }
+
+  /// Performs one queue entry. Callers should use [download], which applies
+  /// concurrency limits and exposes pause/resume/cancel controls.
+  static Future<DownloadItem> downloadNow({
+    required String id,
+    required String url,
+    String? preferredName,
+    Map<String, String>? headers,
+    void Function(double progress)? onProgress,
+    bool registerStore = true,
+    void Function(void Function(String reason) cancel)? onCancel,
   }) async {
     if (SettingsStore.wifiOnly.value) {
       final wifi = await isWifiConnected();
@@ -210,7 +244,6 @@ class DownloadService {
       );
     }
 
-    final id = DateTime.now().microsecondsSinceEpoch.toString();
     final baseName = sanitizeFileName(
       preferredName?.trim().isNotEmpty == true
           ? preferredName!.trim()
@@ -225,7 +258,11 @@ class DownloadService {
     final cacheDir = await _cacheDirectory();
     final tempPath = '$cacheDir${Platform.pathSeparator}$id.part';
 
-    DownloadStore.instance.start(id, fileName);
+    if (registerStore) DownloadStore.instance.start(id, fileName);
+    final cancelToken = CancelToken();
+    onCancel?.call((reason) {
+      cancelToken.cancel(reason);
+    });
 
     try {
       final response = await _dio.download(
@@ -239,6 +276,7 @@ class DownloadService {
           },
         ),
         deleteOnError: true,
+        cancelToken: cancelToken,
         onReceiveProgress: (received, total) {
           if (total > 0) {
             final value = received / total;
@@ -298,11 +336,13 @@ class DownloadService {
         bytes: bytes,
         mimeType: mimeType,
       );
-      await DownloadStore.instance.add(item);
-      DownloadStore.instance.finish(id);
+      if (SettingsStore.keepHistory.value) {
+        await DownloadStore.instance.add(item);
+      }
+      if (registerStore) DownloadStore.instance.finish(id);
       return item;
     } catch (error) {
-      DownloadStore.instance.fail(id);
+      if (registerStore) DownloadStore.instance.fail(id);
       await File(tempPath).delete().catchError((_) {});
       rethrow;
     }

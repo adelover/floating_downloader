@@ -1,13 +1,30 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:floating_downloader/main.dart';
+import 'package:floating_downloader/models/download_task.dart';
+import 'package:floating_downloader/services/download_service.dart';
+import 'package:floating_downloader/services/link_parser.dart';
 
 void main() {
   group('DownloadService helpers', () {
+    test('extracts unique links from pasted text', () {
+      expect(
+        LinkParser.extractHttpLinks(
+          'See https://example.com/a.mp4 and https://example.com/a.mp4, '
+          'then https://example.com/b.mp3.',
+        ),
+        ['https://example.com/a.mp4', 'https://example.com/b.mp3'],
+      );
+    });
     test('sanitizes invalid Android file characters', () {
       expect(
         DownloadService.sanitizeFileName('a:/b?c*'),
         'a__b_c_',
       );
+    });
+
+    test('removes control characters, trailing dots, and device names', () {
+      expect(DownloadService.sanitizeFileName('  con.  '), '_con');
+      expect(DownloadService.sanitizeFileName('a\u0000b...'), 'a_b');
+      expect(DownloadService.sanitizeFileName('../video.mp4'), '.._video.mp4');
     });
 
     test('detects HLS links', () {
@@ -32,5 +49,14 @@ void main() {
         'application/octet-stream',
       );
     });
+  });
+
+  test('download task exposes retry only for recoverable states', () {
+    final task = DownloadTask(id: '1', url: 'https://example.com', name: 'x');
+    expect(task.canRetry, isFalse);
+    task.status = DownloadTaskStatus.failed;
+    expect(task.canRetry, isTrue);
+    task.status = DownloadTaskStatus.cancelled;
+    expect(task.canRetry, isTrue);
   });
 }
