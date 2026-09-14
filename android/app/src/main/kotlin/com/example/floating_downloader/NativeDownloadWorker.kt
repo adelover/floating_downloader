@@ -2,21 +2,12 @@ package com.example.floating_downloader
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.content.ContentValues
 import android.content.Context
-import android.net.Uri
 import android.os.Build
-import android.os.Environment
-import android.provider.MediaStore
 import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.delay
-import java.io.BufferedInputStream
-import java.net.HttpURLConnection
-import java.net.URL
 
 class NativeDownloadWorker(
     appContext: Context,
@@ -37,68 +28,35 @@ class NativeDownloadWorker(
         setForeground(createForegroundInfo(0.0, fileName))
         writeStatus("running", 0.0, null)
 
-        val connection = (URL(urlText).openConnection() as HttpURLConnection).apply {
-            connectTimeout = 20_000
-            readTimeout = 30_000
-            instanceFollowRedirects = true
-            setRequestProperty("Accept", "*/*")
-            setRequestProperty("User-Agent", USER_AGENT)
-        }
-        var outputUri: Uri? = null
-        try {
-            connection.connect()
-            require(connection.url.protocol == "http" || connection.url.protocol == "https") {
-                "Redirected URL must use HTTP or HTTPS"
+        val result = DownloadManagerRepository(applicationContext).download(
+            id = downloadId,
+            url = urlText,
+            fileName = fileName,
+            mimeType = mimeType,
+            isPaused = { prefs.getBoolean("$downloadId:paused", false) },
+            isCancelled = { isStopped },
+            onProgress = { received, total ->
+                val value = progress(received, total)
+                setProgress(androidx.work.workDataOf(KEY_PROGRESS to value))
+                writeStatus(
+                    if (prefs.getBoolean("$downloadId:paused", false)) "paused" else "running",
+                    value,
+                    null
+                )
+                setForeground(createForegroundInfo(value, fileName))
             }
-            if (connection.responseCode !in 200..399) {
-                return fail("Server returned HTTP ${connection.responseCode}")
+        )
+        return result.fold(
+            onSuccess = { uri ->
+                writeStatus("completed", 1.0, uri.toString())
+                updateNotification(fileName, 100, false)
+                Result.success(androidx.work.workDataOf(KEY_URI to uri.toString()))
+            },
+            onFailure = { error ->
+                if (isStopped) Result.failure()
+                else fail(error.message ?: "Download failed")
             }
-            val resolver = applicationContext.contentResolver
-            val values = ContentValues().apply {
-                put(MediaStore.Downloads.DISPLAY_NAME, fileName)
-                put(MediaStore.Downloads.MIME_TYPE, mimeType)
-                put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
-                put(MediaStore.Downloads.IS_PENDING, 1)
-            }
-            outputUri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-                ?: return fail("Could not create Downloads entry")
-            val total = connection.contentLengthLong
-            var received = 0L
-            resolver.openOutputStream(outputUri!!)?.use { output ->
-                BufferedInputStream(connection.inputStream).use { input ->
-                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                    while (true) {
-                        while (prefs.getBoolean("$downloadId:paused", false)) {
-                            writeStatus("paused", progress(received, total), null)
-                            setForeground(createForegroundInfo(progress(received, total), fileName))
-                            delay(500)
-                            if (isStopped) throw CancellationException("Work stopped")
-                        }
-                        if (isStopped) throw CancellationException("Work stopped")
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        output.write(buffer, 0, count)
-                        received += count
-                        val value = progress(received, total)
-                        setProgress(androidx.work.workDataOf(KEY_PROGRESS to value))
-                        writeStatus("running", value, null)
-                        setForeground(createForegroundInfo(value, fileName))
-                    }
-                }
-            } ?: error("Could not open Downloads output")
-            resolver.update(outputUri!!, ContentValues().apply {
-                put(MediaStore.Downloads.IS_PENDING, 0)
-            }, null, null)
-            writeStatus("completed", 1.0, outputUri.toString())
-            updateNotification(fileName, 100, false)
-            return Result.success(androidx.work.workDataOf(KEY_URI to outputUri.toString()))
-        } catch (error: Throwable) {
-            outputUri?.let { applicationContext.contentResolver.delete(it, null, null) }
-            if (isStopped) return Result.failure()
-            return fail(error.message ?: "Download failed")
-        } finally {
-            connection.disconnect()
-        }
+        )
     }
 
     private fun progress(received: Long, total: Long): Double =
