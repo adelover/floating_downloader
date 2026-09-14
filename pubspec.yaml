@@ -15,6 +15,12 @@ dependencies:
   flutter_overlay_window: ^0.5.0
   shared_preferences: ^2.5.5
   url_launcher: ^6.3.2
+  google_sign_in: ^6.2.1
+  github: ^9.20.0
+  oauth2: ^2.0.2
+  flutter_appauth: ^6.1.0
+  jwt_decoder: ^2.0.1
+  crypto: ^3.0.3
 
 dev_dependencies:
   flutter_test:
