@@ -6,19 +6,43 @@ import '../services/native_bridge.dart';
 /// رنگ‌های حالت تاریک و روشن برنامه از این کلاس پیروی می‌کنند.
 class ThemeStore {
   static final ValueNotifier<bool> isDark = ValueNotifier<bool>(true);
+  static final ValueNotifier<int> mode = ValueNotifier<int>(0);
 
   static Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
-    isDark.value = prefs.getBool('dark_theme') ?? true;
+    mode.value = prefs.getInt('theme_mode') ??
+        ((prefs.getBool('dark_theme') ?? true) ? 0 : 1);
+    isDark.value = mode.value != 1;
   }
 
   static Future<void> setDark(bool value) async {
-    isDark.value = value;
+    await setMode(value ? 0 : 1);
+  }
+
+  static Future<void> setMode(int value) async {
+    mode.value = value.clamp(0, 2).toInt();
+    isDark.value = mode.value != 1;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('dark_theme', value);
+    await prefs.setInt('theme_mode', mode.value);
+    await prefs.setBool('dark_theme', isDark.value);
   }
 
   static Future<void> toggle() => setDark(!isDark.value);
+}
+
+class LanguageStore {
+  static final ValueNotifier<String> language = ValueNotifier<String>('fa');
+
+  static Future<void> load() async {
+    final prefs = await SharedPreferences.getInstance();
+    language.value = prefs.getString('language') ?? 'fa';
+  }
+
+  static Future<void> setLanguage(String value) async {
+    language.value = value == 'en' ? 'en' : 'fa';
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('language', language.value);
+  }
 }
 
 class SettingsStore {

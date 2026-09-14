@@ -1,5 +1,17 @@
 # Floating Downloader 3.0
 
+## Aetheria Music
+
+The Android build also includes an offline music library and playback surface. On
+first use, the Music tab requests `READ_MEDIA_AUDIO` on Android 13 and newer, or
+`READ_EXTERNAL_STORAGE` on older releases, then queries `MediaStore` for local
+tracks of at least 30 seconds. Playback is provided by a native Media3 session,
+so play/pause, queue navigation, seek, repeat, shuffle, lock-screen controls, and
+background playback continue outside the Flutter UI. Audio Studio exposes the
+platform equalizer, bass boost, loudness enhancer, and output-device profile
+detection. The selected language (Persian/English) and Dark/Light/AMOLED theme
+are persisted locally.
+
 یک دانلودر اندرویدی مدرن با:
 
 - دانلود واقعی فایل‌های HTTP/HTTPS

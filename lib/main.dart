@@ -18,9 +18,14 @@ import 'controllers/download_queue_controller.dart';
 import 'models/download_task.dart';
 import 'state/app_settings.dart';
 import 'state/download_store.dart';
+import 'music_screen.dart';
 
 Color get _bg =>
-    ThemeStore.isDark.value ? Color(0xFF090B12) : Color(0xFFF3F4FA);
+    ThemeStore.mode.value == 2
+        ? Color(0xFF000000)
+        : ThemeStore.isDark.value
+            ? Color(0xFF090B12)
+            : Color(0xFFF3F4FA);
 Color get _surface =>
     ThemeStore.isDark.value ? Color(0xFF121722) : Color(0xFFFFFFFF);
 Color get _surface2 =>
@@ -53,6 +58,7 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SettingsStore.load();
   await ThemeStore.load();
+  await LanguageStore.load();
   await DownloadGateService.load();
   await SharedLinkBus.init();
   runApp(DownloaderApp());
@@ -63,9 +69,10 @@ class DownloaderApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<bool>(
-      valueListenable: ThemeStore.isDark,
-      builder: (context, isDark, _) {
+    return ValueListenableBuilder<int>(
+      valueListenable: ThemeStore.mode,
+      builder: (context, mode, _) {
+        final isDark = mode != 1;
         final base = ThemeData(
           brightness: isDark ? Brightness.dark : Brightness.light,
           scaffoldBackgroundColor: _bg,
@@ -130,19 +137,22 @@ class DownloaderApp extends StatelessWidget {
           ),
         );
 
-        return MaterialApp(
+        return ValueListenableBuilder<String>(
+          valueListenable: LanguageStore.language,
+          builder: (context, language, _) => MaterialApp(
           debugShowCheckedModeBanner: false,
           title: 'Floating Downloader',
           theme: base,
           builder: (context, child) => Directionality(
-            textDirection: TextDirection.rtl,
+            textDirection:
+                language == 'en' ? TextDirection.ltr : TextDirection.rtl,
             child: child ?? SizedBox.shrink(),
           ),
           home: KeyedSubtree(
-            key: ValueKey(isDark),
+            key: ValueKey('$mode-$language'),
             child: MainScreen(),
           ),
-        );
+        ));
       },
     );
   }
@@ -160,6 +170,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   late final pages = [
     HomeTab(key: HomeTab.globalKey),
+    MusicScreen(),
     PlatformsTab(),
     BrowserTab(),
     HistoryTab(),
@@ -209,6 +220,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             icon: Icon(Icons.space_dashboard_outlined),
             selectedIcon: Icon(Icons.space_dashboard_rounded),
             label: 'خانه',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.library_music_outlined),
+            selectedIcon: Icon(Icons.library_music_rounded),
+            label: 'موسیقی',
           ),
           NavigationDestination(
             icon: Icon(Icons.apps_outlined),
@@ -2633,6 +2649,74 @@ class _SettingsTabState extends State<SettingsTab> {
           ),
           SizedBox(height: 16),
           _SectionTitle(title: 'ظاهر برنامه'),
+          ValueListenableBuilder<int>(
+            valueListenable: ThemeStore.mode,
+            builder: (context, mode, _) => _SettingTile(
+              icon: mode == 2 ? Icons.brightness_2_rounded : Icons.palette_rounded,
+              title: 'حالت نمایش',
+              subtitle: ['تاریک', 'روشن', 'مشکی AMOLED'][mode],
+              color: _primary,
+              onTap: () => showModalBottomSheet<void>(
+                context: context,
+                builder: (sheetContext) => SafeArea(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (final entry in const [
+                        (0, 'تاریک', Icons.dark_mode_rounded),
+                        (1, 'روشن', Icons.light_mode_rounded),
+                        (2, 'مشکی AMOLED', Icons.brightness_2_rounded),
+                      ])
+                        ListTile(
+                          leading: Icon(entry.$3),
+                          title: Text(entry.$2),
+                          trailing: mode == entry.$1 ? const Icon(Icons.check_rounded) : null,
+                          onTap: () {
+                            ThemeStore.setMode(entry.$1);
+                            Navigator.pop(sheetContext);
+                          },
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          ValueListenableBuilder<String>(
+            valueListenable: LanguageStore.language,
+            builder: (context, language, _) => _SettingTile(
+              icon: Icons.translate_rounded,
+              title: 'زبان / Language',
+              subtitle: language == 'fa' ? 'فارسی (راست‌به‌چپ)' : 'English (Left-to-right)',
+              color: _cyan,
+              onTap: () => showModalBottomSheet<void>(
+                context: context,
+                builder: (sheetContext) => SafeArea(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ListTile(
+                        title: const Text('فارسی'),
+                        trailing: language == 'fa' ? const Icon(Icons.check_rounded) : null,
+                        onTap: () {
+                          LanguageStore.setLanguage('fa');
+                          Navigator.pop(sheetContext);
+                        },
+                      ),
+                      ListTile(
+                        title: const Text('English'),
+                        trailing: language == 'en' ? const Icon(Icons.check_rounded) : null,
+                        onTap: () {
+                          LanguageStore.setLanguage('en');
+                          Navigator.pop(sheetContext);
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
           ValueListenableBuilder<bool>(
             valueListenable: ThemeStore.isDark,
             builder: (context, isDark, _) => _SettingSwitchTile(
